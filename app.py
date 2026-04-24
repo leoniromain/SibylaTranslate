@@ -11,7 +11,9 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk
 import customtkinter as ctk
+import fitz  # PyMuPDF
 
 # ── Aparência ──────────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("dark")
@@ -46,8 +48,8 @@ class SibylaApp(ctk.CTk):
         super().__init__()
 
         self.title("SibylaTranslate")
-        self.geometry("920x680")
-        self.minsize(800, 600)
+        self.geometry("1200x700")
+        self.minsize(960, 600)
         self.resizable(True, True)
 
         self._config = self._carregar_config()
@@ -55,6 +57,12 @@ class SibylaApp(ctk.CTk):
         self._log_redirector = LogRedirector(self._log_queue)
         self._cancel_event = threading.Event()
         self._worker: threading.Thread | None = None
+
+        # Estado do preview
+        self._preview_fitz: fitz.Document | None = None
+        self._preview_total: int = 0
+        self._preview_page: int = 1
+        self._preview_ctk_img = None  # mantém referência para evitar GC
 
         self._build_ui()
         self._after_flush = self.after(100, self._flush_log)
@@ -76,12 +84,14 @@ class SibylaApp(ctk.CTk):
 
     # ── Build UI ────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        self.columnconfigure(0, weight=1)
+        # Layout: coluna esq (controles+log) | coluna dir (preview)
+        self.columnconfigure(0, weight=3)
+        self.columnconfigure(1, weight=2)
         self.rowconfigure(3, weight=1)
 
         # ── Cabeçalho ──
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 4))
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=20, pady=(16, 4))
         ctk.CTkLabel(header, text="SibylaTranslate",
                      font=ctk.CTkFont(size=22, weight="bold")).pack(side="left")
         ctk.CTkLabel(header, text="PDF → Word (PT-BR)",
@@ -89,7 +99,7 @@ class SibylaApp(ctk.CTk):
 
         # ── Painel de configuração ──
         cfg = ctk.CTkFrame(self)
-        cfg.grid(row=1, column=0, sticky="ew", padx=20, pady=6)
+        cfg.grid(row=1, column=0, sticky="ew", padx=(20, 6), pady=6)
         cfg.columnconfigure(1, weight=1)
 
         # PDF
@@ -156,7 +166,7 @@ class SibylaApp(ctk.CTk):
 
         # ── Ações ──
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=6)
+        btn_frame.grid(row=2, column=0, sticky="ew", padx=(20, 6), pady=6)
 
         self._btn_traduzir = ctk.CTkButton(
             btn_frame, text="▶  Traduzir", width=150, height=38,
@@ -187,7 +197,7 @@ class SibylaApp(ctk.CTk):
 
         # ── Log ──
         log_frame = ctk.CTkFrame(self)
-        log_frame.grid(row=3, column=0, sticky="nsew", padx=20, pady=(0, 14))
+        log_frame.grid(row=3, column=0, sticky="nsew", padx=(20, 6), pady=(0, 14))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(1, weight=1)
 
@@ -199,6 +209,9 @@ class SibylaApp(ctk.CTk):
         self._log_box = ctk.CTkTextbox(log_frame, font=ctk.CTkFont(family="Courier", size=11),
                                        wrap="word", state="disabled")
         self._log_box.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 8))
+
+        # ── Preview ──
+        self._build_preview_panel()
 
         # Aplica tema salvo
         ctk.set_appearance_mode(self._tema_var.get())
@@ -256,6 +269,9 @@ class SibylaApp(ctk.CTk):
             self._pag_fim_var.set(str(total))
         except Exception:
             self._total_var.set("(não foi possível ler o PDF)")
+            return
+        # Abre documento no preview
+        self._preview_abrir(pdf)
 
     def _todas_paginas(self):
         pdf = self._pdf_var.get()
@@ -410,9 +426,128 @@ class SibylaApp(ctk.CTk):
         self._btn_cancelar.configure(state="disabled")
         self._lbl_status.configure(text="Cancelando…")
 
+    # ── Preview ──────────────────────────────────────────────────────────────────
+    def _build_preview_panel(self):
+        pv = ctk.CTkFrame(self)
+        pv.grid(row=1, column=1, rowspan=3, sticky="nsew", padx=(6, 20), pady=(6, 14))
+        pv.columnconfigure(0, weight=1)
+        pv.rowconfigure(1, weight=1)
+
+        # Cabeçalho do painel
+        ctk.CTkLabel(pv, text="Pré-visualização",
+                     font=ctk.CTkFont(size=12), text_color="gray60").grid(
+            row=0, column=0, sticky="w", padx=10, pady=(8, 2))
+
+        # Área da imagem (scrollável via Canvas)
+        self._preview_canvas = tk.Canvas(pv, bg="#2b2b2b", highlightthickness=0)
+        self._preview_canvas.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
+        self._preview_canvas_img_id = None
+
+        # Bind para redimensionamento
+        self._preview_canvas.bind("<Configure>", lambda e: self._preview_renderizar())
+
+        # Navegação
+        nav = ctk.CTkFrame(pv, fg_color="transparent")
+        nav.grid(row=2, column=0, pady=(2, 8))
+
+        self._btn_prev = ctk.CTkButton(nav, text="◀", width=36,
+                                       command=self._preview_anterior)
+        self._btn_prev.pack(side="left", padx=4)
+
+        self._preview_lbl_pag = ctk.CTkLabel(nav, text="—",
+                                              font=ctk.CTkFont(size=11), width=110)
+        self._preview_lbl_pag.pack(side="left", padx=4)
+
+        self._btn_next = ctk.CTkButton(nav, text="▶", width=36,
+                                       command=self._preview_proxima)
+        self._btn_next.pack(side="left", padx=4)
+
+        # Campo de salto direto
+        self._preview_goto_var = tk.StringVar()
+        goto_entry = ctk.CTkEntry(nav, textvariable=self._preview_goto_var,
+                                  width=52, placeholder_text="ir")
+        goto_entry.pack(side="left", padx=(10, 2))
+        goto_entry.bind("<Return>", lambda e: self._preview_goto())
+        ctk.CTkButton(nav, text="→", width=30,
+                      command=self._preview_goto).pack(side="left")
+
+    def _preview_abrir(self, pdf_path: str):
+        """Abre (ou reabre) o documento fitz para o preview."""
+        if self._preview_fitz:
+            try:
+                self._preview_fitz.close()
+            except Exception:
+                pass
+        try:
+            self._preview_fitz = fitz.open(pdf_path)
+            self._preview_total = len(self._preview_fitz)
+            self._preview_page = 1
+            self._preview_renderizar()
+        except Exception as e:
+            self._preview_fitz = None
+            self._preview_total = 0
+
+    def _preview_renderizar(self):
+        """Renderiza a página atual no canvas, ajustando ao tamanho disponível."""
+        if not self._preview_fitz or self._preview_total == 0:
+            return
+
+        page = self._preview_fitz[self._preview_page - 1]
+        cw = self._preview_canvas.winfo_width()
+        ch = self._preview_canvas.winfo_height()
+        if cw < 10 or ch < 10:
+            return
+
+        # Calcula scale para caber no canvas
+        pr = page.rect
+        scale = min(cw / pr.width, ch / pr.height) * 0.97
+        mat = fitz.Matrix(scale, scale)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        self._preview_ctk_img = ImageTk.PhotoImage(img)
+
+        # Centraliza no canvas
+        cx, cy = cw // 2, ch // 2
+        if self._preview_canvas_img_id:
+            self._preview_canvas.itemconfig(self._preview_canvas_img_id,
+                                            image=self._preview_ctk_img)
+            self._preview_canvas.coords(self._preview_canvas_img_id, cx, cy)
+        else:
+            self._preview_canvas_img_id = self._preview_canvas.create_image(
+                cx, cy, anchor="center", image=self._preview_ctk_img)
+
+        self._preview_lbl_pag.configure(
+            text=f"Página {self._preview_page} / {self._preview_total}")
+
+    def _preview_anterior(self):
+        if self._preview_page > 1:
+            self._preview_page -= 1
+            self._preview_renderizar()
+
+    def _preview_proxima(self):
+        if self._preview_page < self._preview_total:
+            self._preview_page += 1
+            self._preview_renderizar()
+
+    def _preview_goto(self):
+        try:
+            num = int(self._preview_goto_var.get())
+            if 1 <= num <= self._preview_total:
+                self._preview_page = num
+                self._preview_renderizar()
+        except ValueError:
+            pass
+        self._preview_goto_var.set("")
+
     # ── Encerramento ─────────────────────────────────────────────────────────────
     def on_close(self):
         self._cancel_event.set()
+        if self._preview_fitz:
+            try:
+                self._preview_fitz.close()
+            except Exception:
+                pass
         self.after_cancel(self._after_flush)
         self.destroy()
 
