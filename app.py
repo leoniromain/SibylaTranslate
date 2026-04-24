@@ -11,6 +11,7 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from dataclasses import dataclass
 from PIL import Image, ImageTk
 import customtkinter as ctk
 import fitz  # PyMuPDF
@@ -40,6 +41,17 @@ class LogRedirector:
 
     def uninstall(self):
         sys.stdout = self._orig
+
+
+# ── Configuração de tradução ───────────────────────────────────────────────────────
+@dataclass
+class TranslationConfig:
+    pdf: str
+    pag_ini: int
+    pag_fim: int
+    modo: str
+    base: str | None
+    saida: str
 
 
 # ── App principal ──────────────────────────────────────────────────────────────
@@ -84,12 +96,19 @@ class SibylaApp(ctk.CTk):
 
     # ── Build UI ────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        # Layout: coluna esq (controles+log) | coluna dir (preview)
         self.columnconfigure(0, weight=3)
         self.columnconfigure(1, weight=2)
         self.rowconfigure(3, weight=1)
+        self._build_header()
+        self._build_config_panel()
+        self._build_action_bar()
+        self._build_log_panel()
+        self._build_preview_panel()
+        ctk.set_appearance_mode(self._tema_var.get())
+        if self._pdf_var.get():
+            self.after(200, self._atualizar_total_paginas)
 
-        # ── Cabeçalho ──
+    def _build_header(self):
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=20, pady=(16, 4))
         ctk.CTkLabel(header, text="SibylaTranslate",
@@ -97,7 +116,7 @@ class SibylaApp(ctk.CTk):
         ctk.CTkLabel(header, text="PDF → Word (PT-BR)",
                      font=ctk.CTkFont(size=13), text_color="gray60").pack(side="left", padx=12)
 
-        # ── Painel de configuração ──
+    def _build_config_panel(self):
         cfg = ctk.CTkFrame(self)
         cfg.grid(row=1, column=0, sticky="ew", padx=(20, 6), pady=6)
         cfg.columnconfigure(1, weight=1)
@@ -164,7 +183,7 @@ class SibylaApp(ctk.CTk):
         ctk.CTkButton(cfg, text="…", width=36,
                       command=self._selecionar_saida).grid(row=6, column=2, padx=(4, 14), pady=4)
 
-        # ── Ações ──
+    def _build_action_bar(self):
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.grid(row=2, column=0, sticky="ew", padx=(20, 6), pady=6)
 
@@ -188,14 +207,13 @@ class SibylaApp(ctk.CTk):
                                         font=ctk.CTkFont(size=11))
         self._lbl_status.pack(side="left")
 
-        # Tema
         ctk.CTkLabel(btn_frame, text="Tema:").pack(side="right", padx=(0, 4))
         self._tema_var = tk.StringVar(value=self._config.get("tema", "dark"))
         ctk.CTkOptionMenu(btn_frame, variable=self._tema_var,
                           values=["dark", "light", "system"],
                           width=90, command=self._on_tema_change).pack(side="right", padx=(0, 6))
 
-        # ── Log ──
+    def _build_log_panel(self):
         log_frame = ctk.CTkFrame(self)
         log_frame.grid(row=3, column=0, sticky="nsew", padx=(20, 6), pady=(0, 14))
         log_frame.columnconfigure(0, weight=1)
@@ -209,16 +227,6 @@ class SibylaApp(ctk.CTk):
         self._log_box = ctk.CTkTextbox(log_frame, font=ctk.CTkFont(family="Courier", size=11),
                                        wrap="word", state="disabled")
         self._log_box.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 8))
-
-        # ── Preview ──
-        self._build_preview_panel()
-
-        # Aplica tema salvo
-        ctk.set_appearance_mode(self._tema_var.get())
-
-        # Detecta total de páginas se PDF já estava salvo
-        if self._pdf_var.get():
-            self.after(200, self._atualizar_total_paginas)
 
     # ── Seletores de arquivo ────────────────────────────────────────────────────
     def _selecionar_pdf(self):
@@ -331,15 +339,15 @@ class SibylaApp(ctk.CTk):
         self._log_box.delete("1.0", "end")
         self._log_box.configure(state="disabled")
 
-    # ── Validação ───────────────────────────────────────────────────────────────
-    def _validar(self) -> bool:
+    # ── Validação e coleta de dados ───────────────────────────────────────────
+    def _collect_config(self) -> TranslationConfig | None:
         pdf = self._pdf_var.get().strip()
         if not pdf:
             messagebox.showerror("Erro", "Selecione um arquivo PDF.")
-            return False
+            return None
         if not os.path.isfile(pdf):
             messagebox.showerror("Erro", f"PDF não encontrado:\n{pdf}")
-            return False
+            return None
         try:
             ini = int(self._pag_ini_var.get())
             fim = int(self._pag_fim_var.get())
@@ -347,71 +355,56 @@ class SibylaApp(ctk.CTk):
                 raise ValueError
         except ValueError:
             messagebox.showerror("Erro", "Intervalo de páginas inválido.")
-            return False
+            return None
         modo = self._modo_var.get()
+        base: str | None = None
         if modo in ("append", "replace"):
-            base = self._base_var.get().strip()
+            base = self._base_var.get().strip() or None
             if not base:
                 messagebox.showerror("Erro", "Selecione o arquivo .docx base para o modo Append/Replace.")
-                return False
+                return None
             if not os.path.isfile(base):
                 messagebox.showerror("Erro", f"Arquivo base não encontrado:\n{base}")
-                return False
-        return True
+                return None
+        saida = self._saida_var.get().strip()
+        if not saida:
+            nome_base = os.path.splitext(os.path.basename(pdf))[0]
+            saida = (os.path.join(os.path.dirname(pdf), f"{nome_base}_pt_p{ini}-p{fim}.docx")
+                     if modo == "novo" else base)
+        return TranslationConfig(pdf=pdf, pag_ini=ini, pag_fim=fim, modo=modo, base=base, saida=saida)
 
     # ── Execução ─────────────────────────────────────────────────────────────────
     def _iniciar(self):
-        if not self._validar():
+        cfg = self._collect_config()
+        if cfg is None:
             return
 
-        pdf      = self._pdf_var.get().strip()
-        ini      = int(self._pag_ini_var.get())
-        fim      = int(self._pag_fim_var.get())
-        modo     = self._modo_var.get()
-        base     = self._base_var.get().strip() or None
-        saida    = self._saida_var.get().strip()
-
-        # Nome automático se não informado
-        if not saida:
-            nome_base = os.path.splitext(os.path.basename(pdf))[0]
-            if modo == "novo":
-                saida = os.path.join(os.path.dirname(pdf), f"{nome_base}_pt_p{ini}-p{fim}.docx")
-            else:
-                saida = base  # sobrescreve o arquivo base
-
-        self._log(f"▶ Iniciando tradução: páginas {ini}–{fim}  |  modo: {modo.upper()}")
-        self._log(f"  Saída: {saida}\n")
+        self._log(f"▶ Iniciando tradução: páginas {cfg.pag_ini}–{cfg.pag_fim}  |  modo: {cfg.modo.upper()}")
+        self._log(f"  Saída: {cfg.saida}\n")
 
         self._progress.set(0)
         self._lbl_status.configure(text="Iniciando…")
         self._btn_traduzir.configure(state="disabled")
         self._btn_cancelar.configure(state="normal")
         self._cancel_event.clear()
-
-        # Instala redirecionador de stdout
         self._log_redirector.install()
 
-        # Roda em thread separada
         self._worker = threading.Thread(
-            target=self._run_worker,
-            args=(pdf, ini, fim, saida, modo, base),
-            daemon=True
+            target=self._run_worker, args=(cfg,), daemon=True
         )
         self._worker.start()
 
-    def _run_worker(self, pdf, ini, fim, saida, modo, base):
+    def _run_worker(self, cfg: TranslationConfig):
         """Roda na thread de background — não acessa widgets diretamente."""
         try:
             import traduzir_pdf as tp
-            # Injeta cancel_event no módulo para suporte a cancelamento
-            tp._cancel_event = self._cancel_event
-            tp.processar(pdf, ini, fim, saida, modo, base)
-            self._log_queue.put(f"\n✅ Concluído! Arquivo salvo em:\n   {saida}\n")
+            tp.processar(cfg.pdf, cfg.pag_ini, cfg.pag_fim, cfg.saida, cfg.modo, cfg.base,
+                         cancel_event=self._cancel_event)
+            self._log_queue.put(f"\n✅ Concluído! Arquivo salvo em:\n   {cfg.saida}\n")
         except Exception as e:
             self._log_queue.put(f"\n❌ Erro: {e}\n")
         finally:
             self._log_redirector.uninstall()
-            # Agenda atualização da UI de volta na thread principal
             self.after(0, self._finalizar)
 
     def _finalizar(self):

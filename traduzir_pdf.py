@@ -550,14 +550,6 @@ def _mover_para_antes_de(doc, count_before: int, ref_element):
         ref_element.addprevious(elem)
 
 
-# cancel_event opcional — setado pelo app.py para interromper entre páginas
-_cancel_event: threading.Event | None = None
-
-
-def _foi_cancelado() -> bool:
-    return _cancel_event is not None and _cancel_event.is_set()
-
-
 def _processar_pagina(num, pdf, fitz_doc, doc, modo, ref_element=None):
     """
     Extrai, traduz e insere uma página no doc.
@@ -595,7 +587,8 @@ def _processar_pagina(num, pdf, fitz_doc, doc, modo, ref_element=None):
 
 
 def processar(pdf_path: str, pag_ini: int, pag_fim: int, saida: str,
-              modo: str = "novo", arquivo_base: str = None):
+              modo: str = "novo", arquivo_base: str = None,
+              cancel_event: threading.Event | None = None):
     """
     Modos:
       novo    — cria novo arquivo .docx
@@ -633,7 +626,7 @@ def processar(pdf_path: str, pag_ini: int, pag_fim: int, saida: str,
         print(f"Total de páginas no PDF: {total}\n")
 
         for num in range(pag_ini, pag_fim + 1):
-            if _foi_cancelado():
+            if cancel_event is not None and cancel_event.is_set():
                 print("\n⚠️  Tradução cancelada pelo usuário.")
                 break
             print(f"[{num}/{pag_fim}] Página {num}...", end=" ", flush=True)
