@@ -68,9 +68,11 @@ def _agrupar_em_paragrafos(resultados: list, gap_max: int = 12) -> list:
     return resultado_grupos
 
 
-def ocr_traduzir_imagem(img_bytes: bytes) -> bytes:
+def ocr_traduzir_imagem(img_bytes: bytes,
+                        src: str = "en",
+                        dst: str = "pt") -> bytes:
     """
-    Faz OCR, agrupa em parágrafos, traduz e redesenha o texto em PT-BR.
+    Faz OCR, agrupa em parágrafos, traduz e redesenha o texto no idioma destino.
     Retorna PNG bytes com o texto já traduzido.
     """
     reader = get_ocr_reader()
@@ -98,7 +100,7 @@ def ocr_traduzir_imagem(img_bytes: bytes) -> bytes:
         cor_fundo = tuple(int(np.median(regiao_arr[:, :, c])) for c in range(3))
         cor_texto = _cor_contraste(*cor_fundo)
 
-        traduzido = traduzir_texto(g["texto"])
+        traduzido = traduzir_texto(g["texto"], src, dst)
         n_linhas_orig = max(1, len(g["texto"].split("\n")))
         tam_inicial = max((box_h // n_linhas_orig) - 4, 8)
 

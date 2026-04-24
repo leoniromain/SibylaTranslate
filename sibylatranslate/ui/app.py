@@ -15,6 +15,145 @@ from .log_redirector import LogRedirector
 from .preview_panel import PreviewPanel
 
 
+# ── Tabela de idiomas suportados pelo Google Translate ──────────────────────
+_LANGS: list[tuple[str, str]] = [
+    ("auto",  "auto-detectar"),
+    ("af",    "Africâner"),
+    ("ar",    "Árabe"),
+    ("hy",    "Armênio"),
+    ("az",    "Azerbaijano"),
+    ("eu",    "Basco"),
+    ("bn",    "Bengali"),
+    ("bg",    "Búlgaro"),
+    ("ca",    "Catalão"),
+    ("zh-CN", "Chinês (simpl.)"),
+    ("zh-TW", "Chinês (trad.)"),
+    ("ko",    "Coreano"),
+    ("hr",    "Croata"),
+    ("da",    "Dinamarquês"),
+    ("sk",    "Eslovaco"),
+    ("sl",    "Esloveno"),
+    ("es",    "Espanhol"),
+    ("et",    "Estoniano"),
+    ("fi",    "Finlandês"),
+    ("fr",    "Francês"),
+    ("gl",    "Galego"),
+    ("ka",    "Georgiano"),
+    ("el",    "Grego"),
+    ("gu",    "Gujarati"),
+    ("he",    "Hebraico"),
+    ("hi",    "Hindi"),
+    ("nl",    "Holandês"),
+    ("hu",    "Húngaro"),
+    ("id",    "Indonésio"),
+    ("en",    "Inglês"),
+    ("it",    "Italiano"),
+    ("ja",    "Japonês"),
+    ("kn",    "Kannada"),
+    ("kk",    "Cazaque"),
+    ("km",    "Khmer"),
+    ("lo",    "Laosiano"),
+    ("la",    "Latim"),
+    ("lv",    "Letão"),
+    ("lt",    "Lituano"),
+    ("mk",    "Macedônio"),
+    ("ms",    "Malaio"),
+    ("ml",    "Malaiala"),
+    ("mi",    "Maori"),
+    ("mr",    "Marathi"),
+    ("mn",    "Mongol"),
+    ("ne",    "Nepalês"),
+    ("no",    "Norueguês"),
+    ("fa",    "Persa"),
+    ("pl",    "Polonês"),
+    ("pt",    "Português"),
+    ("pa",    "Punjabi"),
+    ("ro",    "Romeno"),
+    ("ru",    "Russo"),
+    ("sr",    "Sérvio"),
+    ("si",    "Cingalês"),
+    ("so",    "Somali"),
+    ("sv",    "Sueco"),
+    ("sw",    "Suaíli"),
+    ("tg",    "Tadjique"),
+    ("ta",    "Tâmil"),
+    ("te",    "Telugu"),
+    ("th",    "Tailandês"),
+    ("tr",    "Turco"),
+    ("uk",    "Ucraniano"),
+    ("ur",    "Urdu"),
+    ("uz",    "Usbeque"),
+    ("vi",    "Vietnamita"),
+    ("cy",    "Galês"),
+    ("yi",    "Iídiche"),
+    ("zu",    "Zulu"),
+]
+
+_LANG_DISPLAY    = [f"{nome} ({cod})" for cod, nome in _LANGS]
+_CODE_BY_DISPLAY = {f"{nome} ({cod})": cod for cod, nome in _LANGS}
+_DISPLAY_BY_CODE = {cod: f"{nome} ({cod})" for cod, nome in _LANGS}
+
+
+def _lang_code(display: str) -> str:
+    """Extrai o código de 'Nome (cod)' ou devolve o valor como está (código direto)."""
+    return _CODE_BY_DISPLAY.get(display, display)
+
+
+class _LangPicker(ctk.CTkFrame):
+    """Entry editável + botão que abre popup scrollable com ~10 idiomas visíveis."""
+
+    _ITEM_H  = 28   # altura de cada item
+    _ITEMS_V = 10   # máximo de itens visíveis sem rolar
+
+    def __init__(self, master, variable: tk.StringVar, width: int = 200, **kw):
+        super().__init__(master, fg_color="transparent", **kw)
+        self._var = variable
+        self._popup: ctk.CTkToplevel | None = None
+        self._entry = ctk.CTkEntry(self, textvariable=self._var, width=width - 34)
+        self._entry.pack(side="left")
+        ctk.CTkButton(self, text="▾", width=30, height=28,
+                      command=self._toggle).pack(side="left", padx=(2, 0))
+
+    def _toggle(self) -> None:
+        if self._popup and self._popup.winfo_exists():
+            self._popup.destroy()
+            self._popup = None
+            return
+        self._open_popup()
+
+    def _open_popup(self) -> None:
+        popup = ctk.CTkToplevel(self)
+        popup.wm_overrideredirect(True)
+        popup.attributes("-topmost", True)
+
+        popup_w = self._entry.winfo_width() + 34
+        popup_h = self._ITEM_H * self._ITEMS_V + 6
+        scroll = ctk.CTkScrollableFrame(popup, width=popup_w - 20,
+                                        height=popup_h)
+        scroll.pack(fill="both", expand=True, padx=0, pady=0)
+
+        for display in _LANG_DISPLAY:
+            ctk.CTkButton(
+                scroll, text=display, anchor="w", height=self._ITEM_H,
+                fg_color="transparent", hover_color=("gray80", "gray30"),
+                command=lambda d=display: self._select(d, popup),
+            ).pack(fill="x", pady=1, padx=2)
+
+        self.update_idletasks()
+        x = self._entry.winfo_rootx()
+        y = self._entry.winfo_rooty() + self._entry.winfo_height() + 2
+        popup.geometry(f"+{x}+{y}")
+        popup.focus_set()
+        popup.bind("<FocusOut>",
+                   lambda e: popup.destroy() if popup.winfo_exists() else None)
+        self._popup = popup
+
+    def _select(self, display: str, popup: ctk.CTkToplevel) -> None:
+        self._var.set(display)
+        popup.destroy()
+        self._popup = None
+
+
 class SibylaApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -84,11 +223,26 @@ class SibylaApp(ctk.CTk):
         ctk.CTkButton(pag_frame, text="Todas", width=70,
                       command=self._todas_paginas).pack(side="left", padx=(16, 0))
 
+        lang_frame = ctk.CTkFrame(cfg, fg_color="transparent")
+        lang_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=14, pady=4)
+        ctk.CTkLabel(lang_frame, text="Idioma:").pack(side="left")
+        ctk.CTkLabel(lang_frame, text="Origem:").pack(side="left", padx=(12, 4))
+        saved_src = self._config.get("lang_src", "en")
+        saved_dst = self._config.get("lang_dst", "pt")
+        self._lang_src_var = tk.StringVar(
+            value=_DISPLAY_BY_CODE.get(saved_src, saved_src))
+        self._lang_dst_var = tk.StringVar(
+            value=_DISPLAY_BY_CODE.get(saved_dst, saved_dst))
+        _LangPicker(lang_frame, variable=self._lang_src_var, width=200).pack(side="left")
+        ctk.CTkLabel(lang_frame, text="→").pack(side="left", padx=8)
+        ctk.CTkLabel(lang_frame, text="Destino:").pack(side="left", padx=(0, 4))
+        _LangPicker(lang_frame, variable=self._lang_dst_var, width=200).pack(side="left")
+
         ctk.CTkFrame(cfg, height=1, fg_color="gray30").grid(
-            row=3, column=0, columnspan=3, sticky="ew", padx=14, pady=8)
+            row=4, column=0, columnspan=3, sticky="ew", padx=14, pady=8)
 
         modo_frame = ctk.CTkFrame(cfg, fg_color="transparent")
-        modo_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=14, pady=4)
+        modo_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=14, pady=4)
         ctk.CTkLabel(modo_frame, text="Modo:").pack(side="left")
         self._modo_var = tk.StringVar(value="novo")
         for val, txt in [("novo", "Novo arquivo"),
@@ -98,7 +252,7 @@ class SibylaApp(ctk.CTk):
                                command=self._on_modo_change).pack(side="left", padx=12)
 
         self._base_frame = ctk.CTkFrame(cfg, fg_color="transparent")
-        self._base_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=14, pady=(2, 4))
+        self._base_frame.grid(row=6, column=0, columnspan=3, sticky="ew", padx=14, pady=(2, 4))
         ctk.CTkLabel(self._base_frame, text="Arquivo .docx base:").pack(side="left")
         self._base_var = tk.StringVar(value=self._config.get("ultimo_docx", ""))
         ctk.CTkEntry(self._base_frame, textvariable=self._base_var,
@@ -108,13 +262,13 @@ class SibylaApp(ctk.CTk):
         self._base_frame.grid_remove()
 
         ctk.CTkLabel(cfg, text="Arquivo de saída:", anchor="w").grid(
-            row=6, column=0, sticky="w", padx=(14, 6), pady=4)
+            row=7, column=0, sticky="w", padx=(14, 6), pady=4)
         self._saida_var = tk.StringVar(value=self._config.get("ultima_saida", ""))
         ctk.CTkEntry(cfg, textvariable=self._saida_var,
                      placeholder_text="saida.docx  (deixe vazio para nome automático)").grid(
-            row=6, column=1, sticky="ew", padx=4, pady=4)
+            row=7, column=1, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(cfg, text="…", width=36,
-                      command=self._selecionar_saida).grid(row=6, column=2, padx=(4, 14), pady=4)
+                      command=self._selecionar_saida).grid(row=7, column=2, padx=(4, 14), pady=4)
 
     def _build_action_bar(self) -> None:
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -298,8 +452,13 @@ class SibylaApp(ctk.CTk):
                 os.path.join(os.path.dirname(pdf), f"{nome_base}_pt_p{ini}-p{fim}.docx")
                 if modo == "novo" else base
             )
+        lang_src = _lang_code(self._lang_src_var.get().strip()) or "en"
+        lang_dst = _lang_code(self._lang_dst_var.get().strip()) or "pt"
+        self._config.set("lang_src", lang_src)
+        self._config.set("lang_dst", lang_dst)
         return TranslationConfig(pdf=pdf, pag_ini=ini, pag_fim=fim,
-                                 modo=modo, base=base, saida=saida)
+                                 modo=modo, base=base, saida=saida,
+                                 lang_src=lang_src, lang_dst=lang_dst)
 
     # ── Execução ─────────────────────────────────────────────────────────────
     def _iniciar(self) -> None:
@@ -307,7 +466,7 @@ class SibylaApp(ctk.CTk):
         if cfg is None:
             return
 
-        self._log(f"▶ Iniciando tradução: páginas {cfg.pag_ini}–{cfg.pag_fim}  |  modo: {cfg.modo.upper()}")
+        self._log(f"▶ Iniciando tradução: páginas {cfg.pag_ini}–{cfg.pag_fim}  |  modo: {cfg.modo.upper()}  |  {cfg.lang_src} → {cfg.lang_dst}")
         self._log(f"  Saída: {cfg.saida}\n")
         self._progress.set(0)
         self._lbl_status.configure(text="Iniciando…")
@@ -323,7 +482,8 @@ class SibylaApp(ctk.CTk):
         """Roda na thread de background — não acessa widgets diretamente."""
         try:
             processar(cfg.pdf, cfg.pag_ini, cfg.pag_fim, cfg.saida, cfg.modo, cfg.base,
-                      cancel_event=self._cancel_event)
+                      cancel_event=self._cancel_event,
+                      lang_src=cfg.lang_src, lang_dst=cfg.lang_dst)
             self._log_queue.put(f"\n✅ Concluído! Arquivo salvo em:\n   {cfg.saida}\n")
         except Exception as e:
             self._log_queue.put(f"\n❌ Erro: {e}\n")

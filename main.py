@@ -50,6 +50,11 @@ Exemplos:
     grupo.add_argument("--replace", metavar="DOCX",
                        help="Substitui as páginas no DOCX informado (mantém posição)")
 
+    parser.add_argument("--src-lang", default="en", metavar="LANG",
+                        help="Idioma de origem (padrão: en). Ex: fr, de, auto")
+    parser.add_argument("--dst-lang", default="pt", metavar="LANG",
+                        help="Idioma de destino (padrão: pt). Ex: es, fr, en")
+
     args = parser.parse_args()
 
     if not os.path.isfile(args.pdf):
@@ -70,7 +75,8 @@ Exemplos:
         nome = os.path.splitext(os.path.basename(args.pdf))[0]
         saida = args.output or f"{nome}_pt_p{args.pag_ini}-p{args.pag_fim}.docx"
 
-    processar(args.pdf, args.pag_ini, args.pag_fim, saida, modo, arquivo_base)
+    processar(args.pdf, args.pag_ini, args.pag_fim, saida, modo, arquivo_base,
+             lang_src=args.src_lang, lang_dst=args.dst_lang)
 
 
 if __name__ == "__main__":

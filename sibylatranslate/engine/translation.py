@@ -44,13 +44,15 @@ def _restaurar_nomes(texto: str, mapa: dict) -> str:
     return texto
 
 
-def traduzir_texto(texto: str) -> str:
+def traduzir_texto(texto: str,
+                   src: str = SOURCE_LANG,
+                   dst: str = TARGET_LANG) -> str:
     """Traduz texto preservando nomes próprios e quebras de parágrafo."""
     if not texto.strip():
         return texto
 
     texto_protegido, mapa = _proteger_nomes(texto)
-    translator = GoogleTranslator(source=SOURCE_LANG, target=TARGET_LANG)
+    translator = GoogleTranslator(source=src, target=dst)
     paragrafos = texto_protegido.split("\n")
     resultado = []
     buffer = ""

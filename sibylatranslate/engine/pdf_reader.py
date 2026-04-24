@@ -4,7 +4,8 @@ from .ocr import ocr_traduzir_imagem
 LINE_GAP_PT = 8  # gap vertical (pts) que separa parágrafos distintos
 
 
-def extrair_imagens_da_pagina(fitz_doc, page_index: int) -> list:
+def extrair_imagens_da_pagina(fitz_doc, page_index: int,
+                             src: str = "en", dst: str = "pt") -> list:
     """
     Retorna lista de dicts {bytes, y_top} com imagens embutidas na página,
     ordenadas por posição vertical. Converte tudo para PNG e aplica OCR/tradução.
@@ -24,7 +25,7 @@ def extrair_imagens_da_pagina(fitz_doc, page_index: int) -> list:
             cs  = base_img.get("colorspace", "")
             png = para_png_bytes(raw, cs)
             if png:
-                png = ocr_traduzir_imagem(png)
+                png = ocr_traduzir_imagem(png, src, dst)
                 imagens.append({"bytes": png, "y_top": y_top})
         except Exception:
             pass

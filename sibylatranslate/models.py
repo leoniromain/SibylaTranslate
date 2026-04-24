@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -9,3 +9,5 @@ class TranslationConfig:
     modo: str
     base: str | None
     saida: str
+    lang_src: str = "en"
+    lang_dst: str = "pt"

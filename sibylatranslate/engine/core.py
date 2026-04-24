@@ -22,17 +22,18 @@ from .word_writer import (
 
 
 def _processar_pagina(num: int, pdf, fitz_doc, doc, modo: str,
-                      ref_element=None) -> None:
+                      ref_element=None,
+                      lang_src: str = "en", lang_dst: str = "pt") -> None:
     """Extrai, traduz e insere uma página no doc."""
     page    = pdf.pages[num - 1]
     blocos  = extrair_blocos_pagina(page)
-    imagens = extrair_imagens_da_pagina(fitz_doc, num - 1)
+    imagens = extrair_imagens_da_pagina(fitz_doc, num - 1, lang_src, lang_dst)
     count_before = len(doc.paragraphs)
 
     if not blocos and not imagens:
         print("sem texto/imagens → renderizando + OCR...", end=" ", flush=True)
         img_bytes = pagina_para_imagem_bytes(fitz_doc, num - 1)
-        img_bytes = ocr_traduzir_imagem(img_bytes)
+        img_bytes = ocr_traduzir_imagem(img_bytes, lang_src, lang_dst)
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = p.add_run(f"— Página {num} —")
@@ -45,7 +46,8 @@ def _processar_pagina(num: int, pdf, fitz_doc, doc, modo: str,
         print(f"{len(blocos)} blocos, {len(imagens)} imagens. Traduzindo...",
               end=" ", flush=True)
         blocos_traduzidos = [
-            {**bloco, "texto": traduzir_texto(bloco["texto"])} for bloco in blocos
+            {**bloco, "texto": traduzir_texto(bloco["texto"], lang_src, lang_dst)}
+            for bloco in blocos
         ]
         adicionar_pagina_no_doc(doc, num, blocos_traduzidos, imagens)
 
@@ -57,7 +59,8 @@ def _processar_pagina(num: int, pdf, fitz_doc, doc, modo: str,
 
 def processar(pdf_path: str, pag_ini: int, pag_fim: int, saida: str,
               modo: str = "novo", arquivo_base: str | None = None,
-              cancel_event: threading.Event | None = None) -> None:
+              cancel_event: threading.Event | None = None,
+              lang_src: str = "en", lang_dst: str = "pt") -> None:
     """
     Processa um PDF e salva tradução em Word.
 
@@ -69,6 +72,7 @@ def processar(pdf_path: str, pag_ini: int, pag_fim: int, saida: str,
     print(f"\nArquivo : {pdf_path}")
     print(f"Páginas : {pag_ini} a {pag_fim}")
     print(f"Modo    : {modo.upper()}")
+    print(f"Idiomas : {lang_src} → {lang_dst}")
     print(f"Saída   : {saida}\n")
 
     if modo in ("append", "replace"):
@@ -108,9 +112,11 @@ def processar(pdf_path: str, pag_ini: int, pag_fim: int, saida: str,
 
             if modo == "replace":
                 ref_element = _remover_pagina_do_doc(doc, num)
-                _processar_pagina(num, pdf, fitz_doc, doc, modo, ref_element)
+                _processar_pagina(num, pdf, fitz_doc, doc, modo, ref_element,
+                                  lang_src, lang_dst)
             else:
-                _processar_pagina(num, pdf, fitz_doc, doc, modo)
+                _processar_pagina(num, pdf, fitz_doc, doc, modo,
+                                  lang_src=lang_src, lang_dst=lang_dst)
 
     fitz_doc.close()
     doc.save(saida)
