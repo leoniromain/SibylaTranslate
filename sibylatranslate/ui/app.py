@@ -209,120 +209,141 @@ class SibylaApp(ctk.CTk):
         sb.grid(row=0, column=0, sticky="nsew")
         sb.grid_propagate(False)
         sb.columnconfigure(0, weight=1)
-        sb.rowconfigure(1, weight=1)   # scroll area expands
+        sb.rowconfigure(1, weight=1)
 
-        # ── Header ────────────────────────────────────────────────────────────
-        hdr = ctk.CTkFrame(sb, fg_color="transparent")
-        hdr.grid(row=0, column=0, sticky="ew", padx=16, pady=(18, 8))
-        hdr.columnconfigure(0, weight=1)
-
-        title_row = ctk.CTkFrame(hdr, fg_color="transparent")
-        title_row.pack(fill="x")
-        ctk.CTkLabel(title_row, text="SibylaTranslate",
-                     font=ctk.CTkFont(size=18, weight="bold")).pack(side="left")
+        # ── App name + tema toggle (topo) ─────────────────────────────────────
+        app_hdr = ctk.CTkFrame(sb, fg_color="transparent")
+        app_hdr.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 0))
+        ctk.CTkLabel(app_hdr, text="SibylaTranslate",
+                     font=ctk.CTkFont(size=15, weight="bold")).pack(side="left")
         self._tema_btn = ctk.CTkButton(
-            title_row, text=self._tema_var.get(), width=64, height=26,
-            font=ctk.CTkFont(size=11), fg_color="gray25", hover_color="gray35",
-            command=self._toggle_tema)
+            app_hdr, text=self._tema_var.get(), width=56, height=24,
+            font=ctk.CTkFont(size=10), fg_color="gray20", hover_color="gray30",
+            corner_radius=6, command=self._toggle_tema)
         self._tema_btn.pack(side="right")
 
-        self._subtitle_lbl = ctk.CTkLabel(
-            hdr, text=self._fmt_subtitle(),
-            font=ctk.CTkFont(size=11), text_color="gray50", anchor="w")
-        self._subtitle_lbl.pack(fill="x", pady=(2, 0))
-
-        # ── Scrollable content ────────────────────────────────────────────────
-        scroll = ctk.CTkScrollableFrame(sb, fg_color="transparent")
+        # ── Scrollable fields ─────────────────────────────────────────────────
+        scroll = ctk.CTkScrollableFrame(sb, fg_color="transparent", scrollbar_button_color="gray25")
         scroll.grid(row=1, column=0, sticky="nsew")
         scroll.columnconfigure(0, weight=1)
         self._build_fields(scroll)
 
-        # ── Progress + status ─────────────────────────────────────────────────
-        self._progress = ctk.CTkProgressBar(sb, height=6)
+        # ── Progress bar ──────────────────────────────────────────────────────
+        self._progress = ctk.CTkProgressBar(sb, height=4, corner_radius=2)
         self._progress.set(0)
-        self._progress.grid(row=2, column=0, sticky="ew", padx=16, pady=(6, 2))
+        self._progress.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 2))
 
+        # ── Status + limpar ───────────────────────────────────────────────────
         stat_row = ctk.CTkFrame(sb, fg_color="transparent")
-        stat_row.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 4))
+        stat_row.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 6))
         self._lbl_status = ctk.CTkLabel(
             stat_row, text="Pronto para traduzir",
             text_color="gray50", font=ctk.CTkFont(size=11), anchor="w")
         self._lbl_status.pack(side="left", fill="x", expand=True)
-        ctk.CTkButton(stat_row, text="limpar", width=52, height=22,
+        ctk.CTkButton(stat_row, text="limpar", width=46, height=20,
                       fg_color="transparent", text_color="gray50",
                       hover_color=("gray80", "gray30"), font=ctk.CTkFont(size=11),
                       command=self._limpar_log).pack(side="right")
 
-        # ── Action buttons ────────────────────────────────────────────────────
+        # ── Traduzir / Cancelar ───────────────────────────────────────────────
         btn_row = ctk.CTkFrame(sb, fg_color="transparent")
-        btn_row.grid(row=4, column=0, sticky="ew", padx=16, pady=(4, 18))
+        btn_row.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 16))
         btn_row.columnconfigure(0, weight=1)
         btn_row.columnconfigure(1, weight=1)
 
         self._btn_traduzir = ctk.CTkButton(
-            btn_row, text="▶  Traduzir", height=40,
+            btn_row, text="▶  Traduzir", height=42,
             font=ctk.CTkFont(size=13, weight="bold"), command=self._iniciar)
         self._btn_traduzir.grid(row=0, column=0, sticky="ew", padx=(0, 4))
 
         self._btn_cancelar = ctk.CTkButton(
-            btn_row, text="✕  Cancelar", height=40,
-            fg_color="#8B0000", hover_color="#600000",
+            btn_row, text="✕  Cancelar", height=42,
+            fg_color="#7a1010", hover_color="#5e0c0c",
             command=self._cancelar, state="disabled")
         self._btn_cancelar.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-    def _section_header(self, parent, text: str) -> None:
-        """Rótulo de seção em maiúsculas + linha divisória."""
+    def _section_header(self, parent, text: str, icon: str = "") -> None:
+        """Seção: ícone + rótulo + linha."""
         f = ctk.CTkFrame(parent, fg_color="transparent")
-        f.pack(fill="x", padx=16, pady=(14, 6))
-        ctk.CTkLabel(f, text=text, font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color="gray50").pack(side="left")
-        ctk.CTkFrame(f, height=1, fg_color="gray25").pack(
+        f.pack(fill="x", padx=14, pady=(14, 5))
+        lbl_text = f"{icon} {text}" if icon else text
+        ctk.CTkLabel(f, text=lbl_text,
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color="gray55").pack(side="left")
+        ctk.CTkFrame(f, height=1, fg_color="gray22").pack(
             side="left", fill="x", expand=True, padx=(8, 0))
 
     def _build_fields(self, parent) -> None:
-        """Campos de configuração dentro da área rolável."""
 
-        # ── ARQUIVO DE ENTRADA ────────────────────────────────────────────────
-        self._section_header(parent, "ARQUIVO DE ENTRADA")
-        pdf_card = ctk.CTkFrame(parent)
-        pdf_card.pack(fill="x", padx=16, pady=(0, 4))
+        # ══ ARQUIVO ══════════════════════════════════════════════════════════
+        self._section_header(parent, "ARQUIVO", "📁")
+
+        # Card com miniatura + nome + info + toggle open/close
+        pdf_card = ctk.CTkFrame(parent, corner_radius=8)
+        pdf_card.pack(fill="x", padx=14, pady=(0, 6))
         pdf_card.columnconfigure(1, weight=1)
 
         self._pdf_var = tk.StringVar(value=self._config.get("ultimo_pdf", ""))
-        ctk.CTkLabel(pdf_card, text="📄", font=ctk.CTkFont(size=18),
-                     width=36).grid(row=0, column=0, rowspan=2, padx=(10, 2), pady=8)
-        ctk.CTkEntry(pdf_card, textvariable=self._pdf_var,
-                     placeholder_text="Selecione o PDF…").grid(
-            row=0, column=1, sticky="ew", padx=(0, 4), pady=(8, 2))
-        ctk.CTkButton(pdf_card, text="…", width=32, height=28,
-                      command=self._selecionar_pdf).grid(
-            row=0, column=2, padx=(0, 10), pady=(8, 2))
+
+        # Ícone PDF (miniatura simples)
+        ctk.CTkLabel(pdf_card, text="📄", font=ctk.CTkFont(size=28),
+                     width=44).grid(row=0, column=0, rowspan=2,
+                                    padx=(10, 4), pady=(10, 10))
+
+        # Nome truncado + info
+        self._pdf_name_lbl = ctk.CTkLabel(
+            pdf_card, text=self._pdf_short_name(),
+            font=ctk.CTkFont(size=12, weight="bold"), anchor="w")
+        self._pdf_name_lbl.grid(row=0, column=1, sticky="ew",
+                                padx=(0, 4), pady=(10, 0))
 
         self._total_var = tk.StringVar(value="")
         ctk.CTkLabel(pdf_card, textvariable=self._total_var,
                      text_color="gray50", font=ctk.CTkFont(size=10),
-                     anchor="w").grid(row=1, column=1, sticky="w", pady=(0, 8))
+                     anchor="w").grid(row=1, column=1, sticky="ew",
+                                      padx=(0, 4), pady=(0, 10))
 
-        # ── PÁGINAS ───────────────────────────────────────────────────────────
-        self._section_header(parent, "PÁGINAS")
+        # Botão … para abrir
+        ctk.CTkButton(pdf_card, text="…", width=30, height=26,
+                      command=self._selecionar_pdf).grid(
+            row=0, column=2, rowspan=2, padx=(0, 10))
+
+        # Entry oculto (usado internamente, não exibido)
+        self._pdf_entry_hidden = ctk.CTkEntry(parent, textvariable=self._pdf_var,
+                                              height=0, width=0, fg_color="transparent",
+                                              border_width=0)
+        # não é packed — apenas mantém o StringVar
+
+        # Intervalo de páginas
+        ctk.CTkLabel(parent, text="Intervalo de páginas",
+                     font=ctk.CTkFont(size=10), text_color="gray55",
+                     anchor="w").pack(fill="x", padx=14, pady=(2, 4))
+
         pag_row = ctk.CTkFrame(parent, fg_color="transparent")
-        pag_row.pack(fill="x", padx=16, pady=(0, 4))
+        pag_row.pack(fill="x", padx=14, pady=(0, 4))
 
         self._pag_ini_var = tk.StringVar(value="1")
         self._pag_fim_var = tk.StringVar(value="5")
         ctk.CTkEntry(pag_row, textvariable=self._pag_ini_var,
-                     width=64, justify="center").pack(side="left")
+                     width=60, justify="center",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
         ctk.CTkLabel(pag_row, text="até",
-                     text_color="gray50").pack(side="left", padx=8)
+                     text_color="gray50", font=ctk.CTkFont(size=11)).pack(
+            side="left", padx=8)
         ctk.CTkEntry(pag_row, textvariable=self._pag_fim_var,
-                     width=64, justify="center").pack(side="left")
-        ctk.CTkButton(pag_row, text="Todas", width=68, height=28,
-                      command=self._todas_paginas).pack(side="left", padx=(12, 0))
+                     width=60, justify="center",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        ctk.CTkButton(pag_row, text="Todas", width=72, height=30,
+                      fg_color=("gray85", "gray25"), text_color=("gray10", "gray90"),
+                      hover_color=("gray75", "gray35"),
+                      font=ctk.CTkFont(size=11),
+                      command=self._todas_paginas).pack(side="left", padx=(10, 0))
 
-        # ── IDIOMA ────────────────────────────────────────────────────────────
-        self._section_header(parent, "IDIOMA")
+        # ══ IDIOMA ═══════════════════════════════════════════════════════════
+        self._section_header(parent, "IDIOMA", "🌐")
+
         lang_row = ctk.CTkFrame(parent, fg_color="transparent")
-        lang_row.pack(fill="x", padx=16, pady=(0, 4))
+        lang_row.pack(fill="x", padx=14, pady=(0, 2))
         lang_row.columnconfigure(0, weight=1)
         lang_row.columnconfigure(2, weight=1)
 
@@ -333,82 +354,164 @@ class SibylaApp(ctk.CTk):
         self._lang_dst_var = tk.StringVar(
             value=_DISPLAY_BY_CODE.get(saved_dst, saved_dst))
 
-        _LangPicker(lang_row, variable=self._lang_src_var, width=118).grid(
+        _LangPicker(lang_row, variable=self._lang_src_var, width=110).grid(
             row=0, column=0, sticky="ew")
-        ctk.CTkButton(lang_row, text="⇌", width=34, height=28,
-                      fg_color="transparent", hover_color=("gray80", "gray30"),
+        ctk.CTkButton(lang_row, text="⇌", width=32, height=28,
+                      fg_color="transparent", hover_color=("gray75", "gray30"),
                       font=ctk.CTkFont(size=14),
                       command=self._swap_languages).grid(row=0, column=1, padx=4)
-        _LangPicker(lang_row, variable=self._lang_dst_var, width=118).grid(
+        _LangPicker(lang_row, variable=self._lang_dst_var, width=110).grid(
             row=0, column=2, sticky="ew")
 
-        # ── MODO DE SAÍDA ─────────────────────────────────────────────────────
-        self._section_header(parent, "MODO DE SAÍDA")
+        # Label "Idioma detectado" (placeholder; pode ser atualizado após análise)
+        self._lang_detect_lbl = ctk.CTkLabel(
+            parent, text="", font=ctk.CTkFont(size=10),
+            text_color=("#2db862", "#3dcf76"), anchor="w")
+        self._lang_detect_lbl.pack(fill="x", padx=14, pady=(3, 2))
+
+        # ══ ESTIMATIVA ═══════════════════════════════════════════════════════
+        self._section_header(parent, "ESTIMATIVA", "⚡")
+
+        est_card = ctk.CTkFrame(parent, corner_radius=8)
+        est_card.pack(fill="x", padx=14, pady=(0, 6))
+        est_card.columnconfigure(0, weight=1)
+        est_card.columnconfigure(1, weight=1)
+
+        self._est_duracao_var = tk.StringVar(value="—")
+        self._est_palavras_var = tk.StringVar(value="—")
+        self._est_tokens_var  = tk.StringVar(value="—")
+        self._est_custo_var   = tk.StringVar(value="—")
+
+        for r, (lbl, var, accent) in enumerate([
+            ("Duração",    self._est_duracao_var,  False),
+            ("Palavras",   self._est_palavras_var, True),
+            ("Tokens",     self._est_tokens_var,   False),
+            ("Custo est.", self._est_custo_var,    True),
+        ]):
+            col = r % 2
+            row = r // 2
+            cell = ctk.CTkFrame(est_card, fg_color="transparent")
+            cell.grid(row=row, column=col, sticky="ew",
+                      padx=12, pady=(10 if row == 0 else 0, 10 if row == 1 else 0))
+            ctk.CTkLabel(cell, text=lbl, font=ctk.CTkFont(size=10),
+                         text_color="gray50", anchor="w").pack(anchor="w")
+            tc = ("#1a8cff", "#5EB3FF") if accent else ("gray80", "gray80")
+            ctk.CTkLabel(cell, textvariable=var,
+                         font=ctk.CTkFont(size=13, weight="bold"),
+                         text_color=tc, anchor="w").pack(anchor="w")
+
+        # ══ SAÍDA ════════════════════════════════════════════════════════════
+        self._section_header(parent, "SAÍDA", "📤")
+
+        # Modo
+        ctk.CTkLabel(parent, text="Modo", font=ctk.CTkFont(size=10),
+                     text_color="gray55", anchor="w").pack(fill="x", padx=14, pady=(0, 3))
         self._modo_seg = ctk.CTkSegmentedButton(
             parent, values=_MODO_LABELS, variable=self._modo_var,
-            command=self._on_modo_change, font=ctk.CTkFont(size=11))
-        self._modo_seg.pack(fill="x", padx=16, pady=(0, 4))
+            command=self._on_modo_change, font=ctk.CTkFont(size=11), height=30)
+        self._modo_seg.pack(fill="x", padx=14, pady=(0, 8))
 
         # base frame (hidden until append/replace)
         self._base_frame = ctk.CTkFrame(parent, fg_color="transparent")
         self._base_var = tk.StringVar(value=self._config.get("ultimo_docx", ""))
-        bf_inner = ctk.CTkFrame(self._base_frame)
+        bf_inner = ctk.CTkFrame(self._base_frame, corner_radius=8)
         bf_inner.pack(fill="x")
         bf_inner.columnconfigure(1, weight=1)
         ctk.CTkLabel(bf_inner, text="📄", width=28,
-                     font=ctk.CTkFont(size=14)).grid(row=0, column=0, padx=(8, 2), pady=6)
+                     font=ctk.CTkFont(size=13)).grid(row=0, column=0, padx=(8, 2), pady=6)
         ctk.CTkEntry(bf_inner, textvariable=self._base_var,
                      placeholder_text="Selecione o .docx base…").grid(
             row=0, column=1, sticky="ew", padx=(0, 4), pady=6)
-        ctk.CTkButton(bf_inner, text="…", width=30, height=26,
+        ctk.CTkButton(bf_inner, text="…", width=28, height=24,
                       command=self._selecionar_base).grid(
             row=0, column=2, padx=(0, 8), pady=6)
         self._base_visible = False
 
-        # ── FORMATO DE SAÍDA ──────────────────────────────────────────────────
-        self._section_header(parent, "FORMATO DE SAÍDA")
+        # Formato
+        ctk.CTkLabel(parent, text="Formato", font=ctk.CTkFont(size=10),
+                     text_color="gray55", anchor="w").pack(fill="x", padx=14, pady=(0, 3))
         ctk.CTkSegmentedButton(
             parent, values=_FMT_LABELS, variable=self._fmt_var,
-            command=self._on_fmt_change, font=ctk.CTkFont(size=11),
-        ).pack(fill="x", padx=16, pady=(0, 4))
+            command=self._on_fmt_change, font=ctk.CTkFont(size=11), height=30,
+        ).pack(fill="x", padx=14, pady=(0, 8))
 
-        # ── ARQUIVO DE SAÍDA ──────────────────────────────────────────────────
-        self._section_header(parent, "ARQUIVO DE SAÍDA")
-        out_card = ctk.CTkFrame(parent)
-        out_card.pack(fill="x", padx=16, pady=(0, 16))
+        # Arquivo de saída
+        ctk.CTkLabel(parent, text="Arquivo de saída", font=ctk.CTkFont(size=10),
+                     text_color="gray55", anchor="w").pack(fill="x", padx=14, pady=(0, 3))
+        out_card = ctk.CTkFrame(parent, corner_radius=8)
+        out_card.pack(fill="x", padx=14, pady=(0, 6))
         out_card.columnconfigure(0, weight=1)
 
         self._saida_var = tk.StringVar(value=self._config.get("ultima_saida", ""))
-        ctk.CTkEntry(out_card, textvariable=self._saida_var,
-                     placeholder_text="nome automático se vazio").grid(
-            row=0, column=0, sticky="ew", padx=(10, 4), pady=8)
-        ctk.CTkButton(out_card, text="…", width=32, height=28,
+        self._saida_name_lbl = ctk.CTkLabel(
+            out_card, text=self._saida_short_name(),
+            font=ctk.CTkFont(size=11), anchor="w", text_color="gray80")
+        self._saida_name_lbl.grid(row=0, column=0, sticky="ew",
+                                   padx=(10, 4), pady=8)
+        ctk.CTkButton(out_card, text="…", width=28, height=24,
                       command=self._selecionar_saida).grid(
             row=0, column=1, padx=(0, 10), pady=8)
+        self._saida_var.trace_add("write", lambda *_: self._saida_name_lbl.configure(
+            text=self._saida_short_name()))
+
+        # ══ GLOSSÁRIO ════════════════════════════════════════════════════════
+        self._section_header(parent, "GLOSSÁRIO", "✏️")
+
+        gloss_row = ctk.CTkFrame(parent, fg_color="transparent")
+        gloss_row.pack(fill="x", padx=14, pady=(0, 6))
+        gloss_row.columnconfigure(0, weight=1)
+
+        self._gloss_entry_var = tk.StringVar()
+        ctk.CTkEntry(gloss_row, textvariable=self._gloss_entry_var,
+                     placeholder_text="ex: Sibyla1",
+                     height=30).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ctk.CTkButton(gloss_row, text="+ Add", width=64, height=30,
+                      command=self._gloss_add).grid(row=0, column=1)
+
+        # chips container
+        self._gloss_chips_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        self._gloss_chips_frame.pack(fill="x", padx=14, pady=(0, 8))
+
+        self._gloss_terms: list[str] = self._config.get("glossario", [])
+        self._gloss_chip_widgets: dict[str, ctk.CTkFrame] = {}
+        for term in self._gloss_terms:
+            self._gloss_render_chip(term)
+
 
     # ── Main area (tabbed) ────────────────────────────────────────────────────
     def _build_main_area(self) -> None:
         self._tabview = ctk.CTkTabview(self, anchor="nw")
-        self._tabview.grid(row=0, column=1, sticky="nsew", padx=(0, 16), pady=16)
+        self._tabview.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=(12, 12))
 
-        self._tabview.add("Original")
-        self._tabview.add("Log")
-        self._tabview.add("✂ Recortar")
+        for tab_name in ("Comparar", "Original", "Traduzido", "Log", "Histórico", "✂ Recortar"):
+            self._tabview.add(tab_name)
 
-        # Preview tab
+        # ── Comparar ──────────────────────────────────────────────────────────
+        self._build_compare_tab(self._tabview.tab("Comparar"))
+
+        # ── Original (preview PDF) ────────────────────────────────────────────
         tab_orig = self._tabview.tab("Original")
         tab_orig.columnconfigure(0, weight=1)
         tab_orig.rowconfigure(0, weight=1)
         self._preview = PreviewPanel(tab_orig)
         self._preview.grid(row=0, column=0, sticky="nsew")
 
-        # Log tab
+        # ── Traduzido (placeholder) ───────────────────────────────────────────
+        tab_trad = self._tabview.tab("Traduzido")
+        tab_trad.columnconfigure(0, weight=1)
+        tab_trad.rowconfigure(0, weight=1)
+        self._trad_box = ctk.CTkTextbox(
+            tab_trad, font=ctk.CTkFont(family="Georgia", size=12),
+            wrap="word", state="disabled")
+        self._trad_box.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+
+        # ── Log ───────────────────────────────────────────────────────────────
         tab_log = self._tabview.tab("Log")
         tab_log.columnconfigure(0, weight=1)
         tab_log.rowconfigure(1, weight=1)
 
         log_hdr = ctk.CTkFrame(tab_log, fg_color="transparent")
-        log_hdr.grid(row=0, column=0, sticky="ew", padx=8, pady=(4, 2))
+        log_hdr.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
         ctk.CTkLabel(log_hdr, text="Log de execução",
                      font=ctk.CTkFont(size=12), text_color="gray60").pack(side="left")
         ctk.CTkButton(log_hdr, text="Limpar", width=70, height=24,
@@ -419,8 +522,133 @@ class SibylaApp(ctk.CTk):
             wrap="word", state="disabled")
         self._log_box.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
 
-        # Recortar tab
+        # ── Histórico (placeholder) ───────────────────────────────────────────
+        tab_hist = self._tabview.tab("Histórico")
+        tab_hist.columnconfigure(0, weight=1)
+        tab_hist.rowconfigure(0, weight=1)
+        ctk.CTkLabel(tab_hist, text="Histórico de traduções",
+                     font=ctk.CTkFont(size=13), text_color="gray50").grid(
+            row=0, column=0)
+
+        # ── Recortar ─────────────────────────────────────────────────────────
         self._build_cutter_tab(self._tabview.tab("✂ Recortar"))
+
+    # ── Comparar tab ──────────────────────────────────────────────────────────
+    def _build_compare_tab(self, tab) -> None:
+        tab.columnconfigure(0, weight=1)
+        tab.columnconfigure(1, weight=1)
+        tab.rowconfigure(1, weight=1)
+        tab.rowconfigure(2, weight=0)
+
+        src_lbl = _lang_code(self._lang_src_var.get() if hasattr(self, "_lang_src_var")
+                             else "en").upper()
+        dst_lbl = _lang_code(self._lang_dst_var.get() if hasattr(self, "_lang_dst_var")
+                             else "pt").upper()
+
+        # ── Original header ────────────────────────────────────────────────
+        orig_hdr = ctk.CTkFrame(tab, fg_color="transparent")
+        orig_hdr.grid(row=0, column=0, sticky="ew", padx=(8, 4), pady=(6, 2))
+        self._cmp_orig_lbl = ctk.CTkLabel(
+            orig_hdr, text=f"ORIGINAL · {src_lbl}",
+            font=ctk.CTkFont(size=10, weight="bold"), text_color="gray55")
+        self._cmp_orig_lbl.pack(side="left")
+        nav_orig = ctk.CTkFrame(orig_hdr, fg_color="transparent")
+        nav_orig.pack(side="right")
+        ctk.CTkButton(nav_orig, text="◀", width=28, height=24,
+                      command=lambda: self._cmp_nav("orig", -1)).pack(side="left", padx=2)
+        self._cmp_orig_pag_lbl = ctk.CTkLabel(
+            nav_orig, text="— / —", font=ctk.CTkFont(size=11), width=60)
+        self._cmp_orig_pag_lbl.pack(side="left")
+        ctk.CTkButton(nav_orig, text="▶", width=28, height=24,
+                      command=lambda: self._cmp_nav("orig", 1)).pack(side="left", padx=2)
+
+        # ── Traduzido header ───────────────────────────────────────────────
+        trad_hdr = ctk.CTkFrame(tab, fg_color="transparent")
+        trad_hdr.grid(row=0, column=1, sticky="ew", padx=(4, 8), pady=(6, 2))
+        self._cmp_trad_lbl = ctk.CTkLabel(
+            trad_hdr, text=f"TRADUZIDO · {dst_lbl}",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color=("#1a8cff", "#5EB3FF"))
+        self._cmp_trad_lbl.pack(side="left")
+        nav_trad = ctk.CTkFrame(trad_hdr, fg_color="transparent")
+        nav_trad.pack(side="right")
+        ctk.CTkButton(nav_trad, text="◀", width=28, height=24,
+                      command=lambda: self._cmp_nav("trad", -1)).pack(side="left", padx=2)
+        self._cmp_trad_pag_lbl = ctk.CTkLabel(
+            nav_trad, text="— / —", font=ctk.CTkFont(size=11), width=60)
+        self._cmp_trad_pag_lbl.pack(side="left")
+        ctk.CTkButton(nav_trad, text="▶", width=28, height=24,
+                      command=lambda: self._cmp_nav("trad", 1)).pack(side="left", padx=2)
+
+        # ── Text panels ────────────────────────────────────────────────────
+        self._cmp_orig_box = ctk.CTkTextbox(
+            tab, font=ctk.CTkFont(family="Georgia", size=12),
+            wrap="word", state="disabled", corner_radius=8)
+        self._cmp_orig_box.grid(row=1, column=0, sticky="nsew",
+                                padx=(8, 4), pady=(0, 4))
+
+        self._cmp_trad_box = ctk.CTkTextbox(
+            tab, font=ctk.CTkFont(family="Georgia", size=12),
+            wrap="word", state="disabled", corner_radius=8)
+        self._cmp_trad_box.grid(row=1, column=1, sticky="nsew",
+                                padx=(4, 8), pady=(0, 4))
+
+        # ── Status bar ─────────────────────────────────────────────────────
+        status_bar = ctk.CTkFrame(tab, height=28, corner_radius=0,
+                                  fg_color=("gray90", "gray15"))
+        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew",
+                        padx=0, pady=0)
+        status_bar.columnconfigure(1, weight=1)
+
+        diff_row = ctk.CTkFrame(status_bar, fg_color="transparent")
+        diff_row.pack(side="left", padx=12)
+        for dot, label, color in [
+            ("●", "Adicionado 0",  ("#1f8a3e", "#3dcf76")),
+            ("●", "Alterado 0",   ("#b87a00", "#e0a020")),
+            ("●", "Removido 0",   ("#8a1f1f", "#cf4040")),
+        ]:
+            ctk.CTkLabel(diff_row, text=f"{dot} {label}",
+                         font=ctk.CTkFont(size=10), text_color=color).pack(
+                side="left", padx=(0, 14))
+
+        self._cmp_sync_lbl = ctk.CTkLabel(
+            status_bar, text="● Scroll sincronizado",
+            font=ctk.CTkFont(size=10), text_color=("#1f8a3e", "#3dcf76"))
+        self._cmp_sync_lbl.pack(side="right", padx=12)
+
+        ctk.CTkLabel(status_bar, text="Log  Pronto.",
+                     font=ctk.CTkFont(size=10), text_color="gray50").pack(
+            side="left", padx=4)
+
+        # internal state
+        self._cmp_page  = 1
+        self._cmp_total = 0
+        self._cmp_pages_orig: list[str] = []
+        self._cmp_pages_trad: list[str] = []
+
+    def _cmp_nav(self, side: str, delta: int) -> None:
+        if not self._cmp_total:
+            return
+        self._cmp_page = max(1, min(self._cmp_total, self._cmp_page + delta))
+        self._cmp_render()
+
+    def _cmp_render(self) -> None:
+        p = self._cmp_page
+        t = self._cmp_total
+        pag_str = f"{p} / {t}" if t else "— / —"
+        self._cmp_orig_pag_lbl.configure(text=pag_str)
+        self._cmp_trad_pag_lbl.configure(text=pag_str)
+
+        def _set(box: ctk.CTkTextbox, content: str) -> None:
+            box.configure(state="normal")
+            box.delete("1.0", "end")
+            box.insert("1.0", content)
+            box.configure(state="disabled")
+
+        orig_text = self._cmp_pages_orig[p - 1] if self._cmp_pages_orig else ""
+        trad_text = self._cmp_pages_trad[p - 1] if self._cmp_pages_trad else ""
+        _set(self._cmp_orig_box, orig_text)
+        _set(self._cmp_trad_box, trad_text)
 
     # ── Recortar PDF tab ──────────────────────────────────────────────────────
     def _build_cutter_tab(self, tab) -> None:
@@ -575,11 +803,102 @@ class SibylaApp(ctk.CTk):
         self._cut_status_lbl.configure(text=msg, text_color=color)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+    def _pdf_short_name(self) -> str:
+        p = self._pdf_var.get()
+        if not p:
+            return "Nenhum arquivo selecionado"
+        name = os.path.basename(p)
+        return name[:28] + "…" if len(name) > 30 else name
+
+    def _saida_short_name(self) -> str:
+        p = self._saida_var.get()
+        if not p:
+            return "nome automático"
+        name = os.path.basename(p)
+        return name[:28] + "…" if len(name) > 30 else name
+
+    def _pdf_size_str(self) -> str:
+        try:
+            sz = os.path.getsize(self._pdf_var.get())
+            if sz >= 1_048_576:
+                return f"{sz/1_048_576:.1f} MB"
+            return f"{sz/1024:.0f} KB"
+        except Exception:
+            return ""
+
     def _fmt_subtitle(self) -> str:
         fmt = _FMT_BY_LBL.get(self._fmt_var.get(), "docx")
         nomes = {"docx": "Word (.docx)", "txt": "Texto (.txt)",
                  "md": "Markdown (.md)", "pdf": "PDF (.pdf)"}
         return f"PDF → {nomes.get(fmt, fmt)}"
+
+    # ── Glossário ─────────────────────────────────────────────────────────────
+    def _gloss_add(self) -> None:
+        term = self._gloss_entry_var.get().strip()
+        if not term or term in self._gloss_terms:
+            self._gloss_entry_var.set("")
+            return
+        self._gloss_terms.append(term)
+        self._config.set("glossario", self._gloss_terms)
+        self._gloss_render_chip(term)
+        self._gloss_entry_var.set("")
+
+    def _gloss_render_chip(self, term: str) -> None:
+        chip = ctk.CTkFrame(self._gloss_chips_frame, corner_radius=12,
+                            fg_color=("gray80", "gray25"))
+        chip.pack(side="left", padx=(0, 4), pady=2)
+        ctk.CTkLabel(chip, text=term, font=ctk.CTkFont(size=10),
+                     padx=8).pack(side="left")
+        ctk.CTkButton(chip, text="×", width=18, height=18,
+                      fg_color="transparent", text_color="gray50",
+                      hover_color=("gray70", "gray35"),
+                      font=ctk.CTkFont(size=11),
+                      command=lambda t=term: self._gloss_remove(t)).pack(side="left", padx=(0, 4))
+        self._gloss_chip_widgets[term] = chip
+
+    def _gloss_remove(self, term: str) -> None:
+        if term in self._gloss_terms:
+            self._gloss_terms.remove(term)
+            self._config.set("glossario", self._gloss_terms)
+        w = self._gloss_chip_widgets.pop(term, None)
+        if w:
+            w.destroy()
+
+    def _update_estimativa(self) -> None:
+        """Atualiza métricas de estimativa com base no PDF e range de páginas."""
+        pdf = self._pdf_var.get()
+        if not pdf or not os.path.isfile(pdf):
+            return
+        try:
+            ini = int(self._pag_ini_var.get())
+            fim = int(self._pag_fim_var.get())
+        except ValueError:
+            return
+        try:
+            with pdfplumber.open(pdf) as p:
+                total_pag = len(p.pages)
+                palavras = 0
+                for pg in p.pages[ini - 1: fim]:
+                    txt = pg.extract_text() or ""
+                    palavras += len(txt.split())
+        except Exception:
+            return
+        n_pag = max(1, fim - ini + 1)
+        # ~200 palavras/min tradução online, ~1.3 tokens/palavra, $0.002/1k tokens (estimativa)
+        minutos = max(1, round(n_pag * 0.8))
+        tokens  = round(palavras * 1.3 / 1000)
+        custo   = tokens * 0.002
+        self._est_duracao_var.set(f"~{minutos} min")
+        self._est_palavras_var.set(f"{palavras:,}".replace(",", "."))
+        self._est_tokens_var.set(f"~{tokens}k")
+        self._est_custo_var.set(f"~${custo:.2f}")
+        # idioma detectado
+        lang = self._config.get("lang_src_detected", "")
+        conf = self._config.get("lang_src_conf", 0)
+        if lang and lang in _DISPLAY_BY_CODE:
+            nome = _DISPLAY_BY_CODE[lang].split(" (")[0]
+            self._lang_detect_lbl.configure(
+                text=f"● Idioma detectado: {nome} ({round(conf*100)}%)")
 
     def _toggle_tema(self) -> None:
         nxt = "light" if self._tema_var.get() == "dark" else "dark"
@@ -603,6 +922,7 @@ class SibylaApp(ctk.CTk):
         if path:
             self._pdf_var.set(path)
             self._config.set("ultimo_pdf", path)
+            self._pdf_name_lbl.configure(text=self._pdf_short_name())
             self._atualizar_total_paginas()
 
     def _selecionar_base(self) -> None:
@@ -640,12 +960,13 @@ class SibylaApp(ctk.CTk):
         try:
             with pdfplumber.open(pdf) as p:
                 total = len(p.pages)
-            self._total_var.set(f"{total} páginas")
+            self._total_var.set(f"{total} páginas  ·  {self._pdf_size_str()}")
             self._pag_fim_var.set(str(total))
         except Exception:
             self._total_var.set("(não foi possível ler o PDF)")
             return
         self._preview.abrir(pdf)
+        self.after(300, self._update_estimativa)
 
     def _todas_paginas(self) -> None:
         pdf = self._pdf_var.get()
@@ -788,11 +1109,31 @@ class SibylaApp(ctk.CTk):
                       cancel_event=self._cancel_event,
                       lang_src=cfg.lang_src, lang_dst=cfg.lang_dst, fmt=cfg.fmt)
             self._log_queue.put(f"\n✅ Concluído! Arquivo salvo em:\n   {cfg.saida}\n")
+            # Populate compare view with original text
+            self.after(0, lambda: self._populate_compare(cfg))
         except Exception as e:
             self._log_queue.put(f"\n❌ Erro: {e}\n")
         finally:
             self._log_redirector.uninstall()
             self.after(0, self._finalizar)
+
+    def _populate_compare(self, cfg: TranslationConfig) -> None:
+        """Extrai texto das páginas originais e preenche o painel Comparar."""
+        try:
+            with pdfplumber.open(cfg.pdf) as p:
+                pages = p.pages[cfg.pag_ini - 1: cfg.pag_fim]
+                self._cmp_pages_orig = [pg.extract_text() or "" for pg in pages]
+        except Exception:
+            self._cmp_pages_orig = []
+        self._cmp_pages_trad = []
+        self._cmp_total = len(self._cmp_pages_orig)
+        self._cmp_page  = 1
+        src_lbl = cfg.lang_src.upper()
+        dst_lbl = cfg.lang_dst.upper()
+        self._cmp_orig_lbl.configure(text=f"ORIGINAL · {src_lbl}")
+        self._cmp_trad_lbl.configure(text=f"TRADUZIDO · {dst_lbl}")
+        self._cmp_render()
+        self._tabview.set("Comparar")
 
     def _finalizar(self) -> None:
         self._btn_traduzir.configure(state="normal")
