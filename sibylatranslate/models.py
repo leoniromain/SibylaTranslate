@@ -11,3 +11,4 @@ class TranslationConfig:
     saida: str
     lang_src: str = "en"
     lang_dst: str = "pt"
+    fmt: str = "docx"

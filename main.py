@@ -54,6 +54,9 @@ Exemplos:
                         help="Idioma de origem (padrão: en). Ex: fr, de, auto")
     parser.add_argument("--dst-lang", default="pt", metavar="LANG",
                         help="Idioma de destino (padrão: pt). Ex: es, fr, en")
+    parser.add_argument("--format", default="docx",
+                        choices=["docx", "txt", "md", "pdf"],
+                        help="Formato de saída: docx (padrão), txt, md, pdf")
 
     args = parser.parse_args()
 
@@ -73,10 +76,11 @@ Exemplos:
     else:
         modo, arquivo_base = "novo", None
         nome = os.path.splitext(os.path.basename(args.pdf))[0]
-        saida = args.output or f"{nome}_pt_p{args.pag_ini}-p{args.pag_fim}.docx"
+        ext  = {"docx": ".docx", "txt": ".txt", "md": ".md", "pdf": ".pdf"}.get(args.format, ".docx")
+        saida = args.output or f"{nome}_p{args.pag_ini}-p{args.pag_fim}{ext}"
 
     processar(args.pdf, args.pag_ini, args.pag_fim, saida, modo, arquivo_base,
-             lang_src=args.src_lang, lang_dst=args.dst_lang)
+             lang_src=args.src_lang, lang_dst=args.dst_lang, fmt=args.format)
 
 
 if __name__ == "__main__":

@@ -261,14 +261,24 @@ class SibylaApp(ctk.CTk):
                       command=self._selecionar_base).pack(side="left", padx=4)
         self._base_frame.grid_remove()
 
+        # Formato de saída
+        fmt_frame = ctk.CTkFrame(cfg, fg_color="transparent")
+        fmt_frame.grid(row=7, column=0, columnspan=3, sticky="ew", padx=14, pady=(2, 4))
+        ctk.CTkLabel(fmt_frame, text="Formato:").pack(side="left")
+        self._fmt_var = tk.StringVar(value=self._config.get("fmt", "docx"))
+        for val, lbl in [("docx", "Word (.docx)"), ("txt", "Texto (.txt)"),
+                         ("md", "Markdown (.md)"), ("pdf", "PDF (.pdf)")]:
+            ctk.CTkRadioButton(fmt_frame, text=lbl, variable=self._fmt_var, value=val,
+                               command=self._on_fmt_change).pack(side="left", padx=12)
+
         ctk.CTkLabel(cfg, text="Arquivo de saída:", anchor="w").grid(
-            row=7, column=0, sticky="w", padx=(14, 6), pady=4)
+            row=8, column=0, sticky="w", padx=(14, 6), pady=4)
         self._saida_var = tk.StringVar(value=self._config.get("ultima_saida", ""))
         ctk.CTkEntry(cfg, textvariable=self._saida_var,
                      placeholder_text="saida.docx  (deixe vazio para nome automático)").grid(
-            row=7, column=1, sticky="ew", padx=4, pady=4)
+            row=8, column=1, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(cfg, text="…", width=36,
-                      command=self._selecionar_saida).grid(row=7, column=2, padx=(4, 14), pady=4)
+                      command=self._selecionar_saida).grid(row=8, column=2, padx=(4, 14), pady=4)
 
     def _build_action_bar(self) -> None:
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -341,10 +351,16 @@ class SibylaApp(ctk.CTk):
             self._config.set("ultimo_docx", path)
 
     def _selecionar_saida(self) -> None:
+        fmt = self._fmt_var.get()
+        ext_map = {"docx": (".docx", "Word", "*.docx"),
+                   "txt":  (".txt",  "Texto", "*.txt"),
+                   "md":   (".md",   "Markdown", "*.md"),
+                   "pdf":  (".pdf",  "PDF", "*.pdf")}
+        def_ext, tipo_nome, tipo_glob = ext_map.get(fmt, (".docx", "Word", "*.docx"))
         path = filedialog.asksaveasfilename(
             title="Salvar como…",
-            defaultextension=".docx",
-            filetypes=[("Word", "*.docx")],
+            defaultextension=def_ext,
+            filetypes=[(tipo_nome, tipo_glob), ("Todos", "*.*")],
             initialdir=os.path.dirname(self._saida_var.get()) or os.getcwd(),
         )
         if path:
@@ -383,6 +399,16 @@ class SibylaApp(ctk.CTk):
             self._base_frame.grid()
         else:
             self._base_frame.grid_remove()
+
+    def _on_fmt_change(self) -> None:
+        """Atualiza extensão do arquivo de saída ao trocar o formato."""
+        fmt = self._fmt_var.get()
+        self._config.set("fmt", fmt)
+        saida = self._saida_var.get().strip()
+        if saida:
+            base = os.path.splitext(saida)[0]
+            ext  = {"docx": ".docx", "txt": ".txt", "md": ".md", "pdf": ".pdf"}.get(fmt, ".docx")
+            self._saida_var.set(base + ext)
 
     def _on_tema_change(self, valor: str) -> None:
         ctk.set_appearance_mode(valor)
@@ -446,19 +472,23 @@ class SibylaApp(ctk.CTk):
                 messagebox.showerror("Erro", f"Arquivo base não encontrado:\n{base}")
                 return None
         saida = self._saida_var.get().strip()
+        fmt   = self._fmt_var.get()
+        ext   = {"docx": ".docx", "txt": ".txt", "md": ".md", "pdf": ".pdf"}.get(fmt, ".docx")
         if not saida:
             nome_base = os.path.splitext(os.path.basename(pdf))[0]
             saida = (
-                os.path.join(os.path.dirname(pdf), f"{nome_base}_pt_p{ini}-p{fim}.docx")
+                os.path.join(os.path.dirname(pdf),
+                             f"{nome_base}_p{ini}-p{fim}{ext}")
                 if modo == "novo" else base
             )
         lang_src = _lang_code(self._lang_src_var.get().strip()) or "en"
         lang_dst = _lang_code(self._lang_dst_var.get().strip()) or "pt"
         self._config.set("lang_src", lang_src)
         self._config.set("lang_dst", lang_dst)
+        self._config.set("fmt", fmt)
         return TranslationConfig(pdf=pdf, pag_ini=ini, pag_fim=fim,
                                  modo=modo, base=base, saida=saida,
-                                 lang_src=lang_src, lang_dst=lang_dst)
+                                 lang_src=lang_src, lang_dst=lang_dst, fmt=fmt)
 
     # ── Execução ─────────────────────────────────────────────────────────────
     def _iniciar(self) -> None:
@@ -466,7 +496,7 @@ class SibylaApp(ctk.CTk):
         if cfg is None:
             return
 
-        self._log(f"▶ Iniciando tradução: páginas {cfg.pag_ini}–{cfg.pag_fim}  |  modo: {cfg.modo.upper()}  |  {cfg.lang_src} → {cfg.lang_dst}")
+        self._log(f"▶ Iniciando tradução: páginas {cfg.pag_ini}–{cfg.pag_fim}  |  modo: {cfg.modo.upper()}  |  {cfg.lang_src} → {cfg.lang_dst}  |  {cfg.fmt.upper()}")
         self._log(f"  Saída: {cfg.saida}\n")
         self._progress.set(0)
         self._lbl_status.configure(text="Iniciando…")
@@ -483,7 +513,7 @@ class SibylaApp(ctk.CTk):
         try:
             processar(cfg.pdf, cfg.pag_ini, cfg.pag_fim, cfg.saida, cfg.modo, cfg.base,
                       cancel_event=self._cancel_event,
-                      lang_src=cfg.lang_src, lang_dst=cfg.lang_dst)
+                      lang_src=cfg.lang_src, lang_dst=cfg.lang_dst, fmt=cfg.fmt)
             self._log_queue.put(f"\n✅ Concluído! Arquivo salvo em:\n   {cfg.saida}\n")
         except Exception as e:
             self._log_queue.put(f"\n❌ Erro: {e}\n")
