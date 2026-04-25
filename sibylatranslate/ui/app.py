@@ -99,6 +99,20 @@ def _lang_code(display: str) -> str:
     return _CODE_BY_DISPLAY.get(display, display)
 
 
+# ── Constantes de layout ──────────────────────────────────────────────────────
+_SIDEBAR_W   = 300
+
+_FMT_ITEMS   = [("docx", "Word"), ("txt", "TXT"), ("md", "Markdown"), ("pdf", "PDF")]
+_FMT_BY_LBL  = {lbl: val for val, lbl in _FMT_ITEMS}
+_LBL_BY_FMT  = {val: lbl for val, lbl in _FMT_ITEMS}
+_FMT_LABELS  = [lbl for _, lbl in _FMT_ITEMS]
+
+_MODO_ITEMS  = [("novo", "Novo"), ("append", "Continuar"), ("replace", "Substituir")]
+_MODO_BY_LBL = {lbl: val for val, lbl in _MODO_ITEMS}
+_LBL_BY_MODO = {val: lbl for val, lbl in _MODO_ITEMS}
+_MODO_LABELS = [lbl for _, lbl in _MODO_ITEMS]
+
+
 class _LangPicker(ctk.CTkFrame):
     """Entry editável + botão que abre popup scrollable com ~10 idiomas visíveis."""
 
@@ -158,8 +172,8 @@ class SibylaApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("SibylaTranslate")
-        self.geometry("1200x700")
-        self.minsize(960, 600)
+        self.geometry("1120x720")
+        self.minsize(900, 580)
         self.resizable(True, True)
 
         self._config = AppConfig.load()
@@ -168,167 +182,260 @@ class SibylaApp(ctk.CTk):
         self._cancel_event = threading.Event()
         self._worker: threading.Thread | None = None
 
+        # vars initialized before _build_ui so helpers can reference them
+        self._tema_var = tk.StringVar(value=self._config.get("tema", "dark"))
+        self._fmt_var  = tk.StringVar(value=_LBL_BY_FMT.get(self._config.get("fmt",  "docx"), "Word"))
+        self._modo_var = tk.StringVar(value=_LBL_BY_MODO.get(self._config.get("modo", "novo"), "Novo"))
+
         self._build_ui()
         self._after_flush = self.after(100, self._flush_log)
 
-    # ── Build UI ────────────────────────────────────────────────────────────────
+    # ── Build UI ──────────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
-        self.columnconfigure(0, weight=3)
-        self.columnconfigure(1, weight=2)
-        self.rowconfigure(3, weight=1)
-        self._build_header()
-        self._build_config_panel()
-        self._build_action_bar()
-        self._build_log_panel()
-        self._build_preview_panel()
+        self.columnconfigure(0, weight=0)   # sidebar — fixed
+        self.columnconfigure(1, weight=1)   # main — expands
+        self.rowconfigure(0, weight=1)
+        self._build_sidebar()
+        self._build_main_area()
         ctk.set_appearance_mode(self._tema_var.get())
         if self._pdf_var.get():
             self.after(200, self._atualizar_total_paginas)
 
-    def _build_header(self) -> None:
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=20, pady=(16, 4))
-        ctk.CTkLabel(header, text="SibylaTranslate",
-                     font=ctk.CTkFont(size=22, weight="bold")).pack(side="left")
-        ctk.CTkLabel(header, text="PDF → Word (PT-BR)",
-                     font=ctk.CTkFont(size=13), text_color="gray60").pack(side="left", padx=12)
+    # ── Sidebar ───────────────────────────────────────────────────────────────
+    def _build_sidebar(self) -> None:
+        sb = ctk.CTkFrame(self, width=_SIDEBAR_W, corner_radius=0)
+        sb.grid(row=0, column=0, sticky="nsew")
+        sb.grid_propagate(False)
+        sb.columnconfigure(0, weight=1)
+        sb.rowconfigure(1, weight=1)   # scroll area expands
 
-    def _build_config_panel(self) -> None:
-        cfg = ctk.CTkFrame(self)
-        cfg.grid(row=1, column=0, sticky="ew", padx=(20, 6), pady=6)
-        cfg.columnconfigure(1, weight=1)
+        # ── Header ────────────────────────────────────────────────────────────
+        hdr = ctk.CTkFrame(sb, fg_color="transparent")
+        hdr.grid(row=0, column=0, sticky="ew", padx=16, pady=(18, 8))
+        hdr.columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(cfg, text="PDF de entrada:", anchor="w").grid(
-            row=0, column=0, sticky="w", padx=(14, 6), pady=(12, 4))
+        title_row = ctk.CTkFrame(hdr, fg_color="transparent")
+        title_row.pack(fill="x")
+        ctk.CTkLabel(title_row, text="SibylaTranslate",
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(side="left")
+        self._tema_btn = ctk.CTkButton(
+            title_row, text=self._tema_var.get(), width=64, height=26,
+            font=ctk.CTkFont(size=11), fg_color="gray25", hover_color="gray35",
+            command=self._toggle_tema)
+        self._tema_btn.pack(side="right")
+
+        self._subtitle_lbl = ctk.CTkLabel(
+            hdr, text=self._fmt_subtitle(),
+            font=ctk.CTkFont(size=11), text_color="gray50", anchor="w")
+        self._subtitle_lbl.pack(fill="x", pady=(2, 0))
+
+        # ── Scrollable content ────────────────────────────────────────────────
+        scroll = ctk.CTkScrollableFrame(sb, fg_color="transparent")
+        scroll.grid(row=1, column=0, sticky="nsew")
+        scroll.columnconfigure(0, weight=1)
+        self._build_fields(scroll)
+
+        # ── Progress + status ─────────────────────────────────────────────────
+        self._progress = ctk.CTkProgressBar(sb, height=6)
+        self._progress.set(0)
+        self._progress.grid(row=2, column=0, sticky="ew", padx=16, pady=(6, 2))
+
+        stat_row = ctk.CTkFrame(sb, fg_color="transparent")
+        stat_row.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 4))
+        self._lbl_status = ctk.CTkLabel(
+            stat_row, text="Pronto para traduzir",
+            text_color="gray50", font=ctk.CTkFont(size=11), anchor="w")
+        self._lbl_status.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(stat_row, text="limpar", width=52, height=22,
+                      fg_color="transparent", text_color="gray50",
+                      hover_color=("gray80", "gray30"), font=ctk.CTkFont(size=11),
+                      command=self._limpar_log).pack(side="right")
+
+        # ── Action buttons ────────────────────────────────────────────────────
+        btn_row = ctk.CTkFrame(sb, fg_color="transparent")
+        btn_row.grid(row=4, column=0, sticky="ew", padx=16, pady=(4, 18))
+        btn_row.columnconfigure(0, weight=1)
+        btn_row.columnconfigure(1, weight=1)
+
+        self._btn_traduzir = ctk.CTkButton(
+            btn_row, text="▶  Traduzir", height=40,
+            font=ctk.CTkFont(size=13, weight="bold"), command=self._iniciar)
+        self._btn_traduzir.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+        self._btn_cancelar = ctk.CTkButton(
+            btn_row, text="✕  Cancelar", height=40,
+            fg_color="#8B0000", hover_color="#600000",
+            command=self._cancelar, state="disabled")
+        self._btn_cancelar.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+    def _section_header(self, parent, text: str) -> None:
+        """Rótulo de seção em maiúsculas + linha divisória."""
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.pack(fill="x", padx=16, pady=(14, 6))
+        ctk.CTkLabel(f, text=text, font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color="gray50").pack(side="left")
+        ctk.CTkFrame(f, height=1, fg_color="gray25").pack(
+            side="left", fill="x", expand=True, padx=(8, 0))
+
+    def _build_fields(self, parent) -> None:
+        """Campos de configuração dentro da área rolável."""
+
+        # ── ARQUIVO DE ENTRADA ────────────────────────────────────────────────
+        self._section_header(parent, "ARQUIVO DE ENTRADA")
+        pdf_card = ctk.CTkFrame(parent)
+        pdf_card.pack(fill="x", padx=16, pady=(0, 4))
+        pdf_card.columnconfigure(1, weight=1)
+
         self._pdf_var = tk.StringVar(value=self._config.get("ultimo_pdf", ""))
-        ctk.CTkEntry(cfg, textvariable=self._pdf_var,
-                     placeholder_text="Selecione o arquivo PDF…").grid(
-            row=0, column=1, sticky="ew", padx=4, pady=(12, 4))
-        ctk.CTkButton(cfg, text="…", width=36,
-                      command=self._selecionar_pdf).grid(row=0, column=2, padx=(4, 14), pady=(12, 4))
+        ctk.CTkLabel(pdf_card, text="📄", font=ctk.CTkFont(size=18),
+                     width=36).grid(row=0, column=0, rowspan=2, padx=(10, 2), pady=8)
+        ctk.CTkEntry(pdf_card, textvariable=self._pdf_var,
+                     placeholder_text="Selecione o PDF…").grid(
+            row=0, column=1, sticky="ew", padx=(0, 4), pady=(8, 2))
+        ctk.CTkButton(pdf_card, text="…", width=32, height=28,
+                      command=self._selecionar_pdf).grid(
+            row=0, column=2, padx=(0, 10), pady=(8, 2))
 
         self._total_var = tk.StringVar(value="")
-        ctk.CTkLabel(cfg, textvariable=self._total_var,
-                     text_color="gray60", font=ctk.CTkFont(size=11)).grid(
-            row=1, column=1, sticky="w", padx=4, pady=(0, 6))
+        ctk.CTkLabel(pdf_card, textvariable=self._total_var,
+                     text_color="gray50", font=ctk.CTkFont(size=10),
+                     anchor="w").grid(row=1, column=1, sticky="w", pady=(0, 8))
 
-        pag_frame = ctk.CTkFrame(cfg, fg_color="transparent")
-        pag_frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=14, pady=4)
-        ctk.CTkLabel(pag_frame, text="Página inicial:").pack(side="left")
+        # ── PÁGINAS ───────────────────────────────────────────────────────────
+        self._section_header(parent, "PÁGINAS")
+        pag_row = ctk.CTkFrame(parent, fg_color="transparent")
+        pag_row.pack(fill="x", padx=16, pady=(0, 4))
+
         self._pag_ini_var = tk.StringVar(value="1")
-        ctk.CTkEntry(pag_frame, textvariable=self._pag_ini_var, width=70).pack(side="left", padx=(6, 20))
-        ctk.CTkLabel(pag_frame, text="Página final:").pack(side="left")
         self._pag_fim_var = tk.StringVar(value="5")
-        ctk.CTkEntry(pag_frame, textvariable=self._pag_fim_var, width=70).pack(side="left", padx=6)
-        ctk.CTkButton(pag_frame, text="Todas", width=70,
-                      command=self._todas_paginas).pack(side="left", padx=(16, 0))
+        ctk.CTkEntry(pag_row, textvariable=self._pag_ini_var,
+                     width=64, justify="center").pack(side="left")
+        ctk.CTkLabel(pag_row, text="até",
+                     text_color="gray50").pack(side="left", padx=8)
+        ctk.CTkEntry(pag_row, textvariable=self._pag_fim_var,
+                     width=64, justify="center").pack(side="left")
+        ctk.CTkButton(pag_row, text="Todas", width=68, height=28,
+                      command=self._todas_paginas).pack(side="left", padx=(12, 0))
 
-        lang_frame = ctk.CTkFrame(cfg, fg_color="transparent")
-        lang_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=14, pady=4)
-        ctk.CTkLabel(lang_frame, text="Idioma:").pack(side="left")
-        ctk.CTkLabel(lang_frame, text="Origem:").pack(side="left", padx=(12, 4))
+        # ── IDIOMA ────────────────────────────────────────────────────────────
+        self._section_header(parent, "IDIOMA")
+        lang_row = ctk.CTkFrame(parent, fg_color="transparent")
+        lang_row.pack(fill="x", padx=16, pady=(0, 4))
+        lang_row.columnconfigure(0, weight=1)
+        lang_row.columnconfigure(2, weight=1)
+
         saved_src = self._config.get("lang_src", "en")
         saved_dst = self._config.get("lang_dst", "pt")
         self._lang_src_var = tk.StringVar(
             value=_DISPLAY_BY_CODE.get(saved_src, saved_src))
         self._lang_dst_var = tk.StringVar(
             value=_DISPLAY_BY_CODE.get(saved_dst, saved_dst))
-        _LangPicker(lang_frame, variable=self._lang_src_var, width=200).pack(side="left")
-        ctk.CTkLabel(lang_frame, text="→").pack(side="left", padx=8)
-        ctk.CTkLabel(lang_frame, text="Destino:").pack(side="left", padx=(0, 4))
-        _LangPicker(lang_frame, variable=self._lang_dst_var, width=200).pack(side="left")
 
-        ctk.CTkFrame(cfg, height=1, fg_color="gray30").grid(
-            row=4, column=0, columnspan=3, sticky="ew", padx=14, pady=8)
+        _LangPicker(lang_row, variable=self._lang_src_var, width=118).grid(
+            row=0, column=0, sticky="ew")
+        ctk.CTkButton(lang_row, text="⇌", width=34, height=28,
+                      fg_color="transparent", hover_color=("gray80", "gray30"),
+                      font=ctk.CTkFont(size=14),
+                      command=self._swap_languages).grid(row=0, column=1, padx=4)
+        _LangPicker(lang_row, variable=self._lang_dst_var, width=118).grid(
+            row=0, column=2, sticky="ew")
 
-        modo_frame = ctk.CTkFrame(cfg, fg_color="transparent")
-        modo_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=14, pady=4)
-        ctk.CTkLabel(modo_frame, text="Modo:").pack(side="left")
-        self._modo_var = tk.StringVar(value="novo")
-        for val, txt in [("novo", "Novo arquivo"),
-                         ("append", "Continuar (Append)"),
-                         ("replace", "Substituir páginas (Replace)")]:
-            ctk.CTkRadioButton(modo_frame, text=txt, variable=self._modo_var, value=val,
-                               command=self._on_modo_change).pack(side="left", padx=12)
+        # ── MODO DE SAÍDA ─────────────────────────────────────────────────────
+        self._section_header(parent, "MODO DE SAÍDA")
+        self._modo_seg = ctk.CTkSegmentedButton(
+            parent, values=_MODO_LABELS, variable=self._modo_var,
+            command=self._on_modo_change, font=ctk.CTkFont(size=11))
+        self._modo_seg.pack(fill="x", padx=16, pady=(0, 4))
 
-        self._base_frame = ctk.CTkFrame(cfg, fg_color="transparent")
-        self._base_frame.grid(row=6, column=0, columnspan=3, sticky="ew", padx=14, pady=(2, 4))
-        ctk.CTkLabel(self._base_frame, text="Arquivo .docx base:").pack(side="left")
+        # base frame (hidden until append/replace)
+        self._base_frame = ctk.CTkFrame(parent, fg_color="transparent")
         self._base_var = tk.StringVar(value=self._config.get("ultimo_docx", ""))
-        ctk.CTkEntry(self._base_frame, textvariable=self._base_var,
-                     placeholder_text="Selecione o .docx existente…", width=420).pack(side="left", padx=6)
-        ctk.CTkButton(self._base_frame, text="…", width=36,
-                      command=self._selecionar_base).pack(side="left", padx=4)
-        self._base_frame.grid_remove()
+        bf_inner = ctk.CTkFrame(self._base_frame)
+        bf_inner.pack(fill="x")
+        bf_inner.columnconfigure(1, weight=1)
+        ctk.CTkLabel(bf_inner, text="📄", width=28,
+                     font=ctk.CTkFont(size=14)).grid(row=0, column=0, padx=(8, 2), pady=6)
+        ctk.CTkEntry(bf_inner, textvariable=self._base_var,
+                     placeholder_text="Selecione o .docx base…").grid(
+            row=0, column=1, sticky="ew", padx=(0, 4), pady=6)
+        ctk.CTkButton(bf_inner, text="…", width=30, height=26,
+                      command=self._selecionar_base).grid(
+            row=0, column=2, padx=(0, 8), pady=6)
+        self._base_visible = False
 
-        # Formato de saída
-        fmt_frame = ctk.CTkFrame(cfg, fg_color="transparent")
-        fmt_frame.grid(row=7, column=0, columnspan=3, sticky="ew", padx=14, pady=(2, 4))
-        ctk.CTkLabel(fmt_frame, text="Formato:").pack(side="left")
-        self._fmt_var = tk.StringVar(value=self._config.get("fmt", "docx"))
-        for val, lbl in [("docx", "Word (.docx)"), ("txt", "Texto (.txt)"),
-                         ("md", "Markdown (.md)"), ("pdf", "PDF (.pdf)")]:
-            ctk.CTkRadioButton(fmt_frame, text=lbl, variable=self._fmt_var, value=val,
-                               command=self._on_fmt_change).pack(side="left", padx=12)
+        # ── FORMATO DE SAÍDA ──────────────────────────────────────────────────
+        self._section_header(parent, "FORMATO DE SAÍDA")
+        ctk.CTkSegmentedButton(
+            parent, values=_FMT_LABELS, variable=self._fmt_var,
+            command=self._on_fmt_change, font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=16, pady=(0, 4))
 
-        ctk.CTkLabel(cfg, text="Arquivo de saída:", anchor="w").grid(
-            row=8, column=0, sticky="w", padx=(14, 6), pady=4)
+        # ── ARQUIVO DE SAÍDA ──────────────────────────────────────────────────
+        self._section_header(parent, "ARQUIVO DE SAÍDA")
+        out_card = ctk.CTkFrame(parent)
+        out_card.pack(fill="x", padx=16, pady=(0, 16))
+        out_card.columnconfigure(0, weight=1)
+
         self._saida_var = tk.StringVar(value=self._config.get("ultima_saida", ""))
-        ctk.CTkEntry(cfg, textvariable=self._saida_var,
-                     placeholder_text="saida.docx  (deixe vazio para nome automático)").grid(
-            row=8, column=1, sticky="ew", padx=4, pady=4)
-        ctk.CTkButton(cfg, text="…", width=36,
-                      command=self._selecionar_saida).grid(row=8, column=2, padx=(4, 14), pady=4)
+        ctk.CTkEntry(out_card, textvariable=self._saida_var,
+                     placeholder_text="nome automático se vazio").grid(
+            row=0, column=0, sticky="ew", padx=(10, 4), pady=8)
+        ctk.CTkButton(out_card, text="…", width=32, height=28,
+                      command=self._selecionar_saida).grid(
+            row=0, column=1, padx=(0, 10), pady=8)
 
-    def _build_action_bar(self) -> None:
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=2, column=0, sticky="ew", padx=(20, 6), pady=6)
+    # ── Main area (tabbed) ────────────────────────────────────────────────────
+    def _build_main_area(self) -> None:
+        self._tabview = ctk.CTkTabview(self, anchor="nw")
+        self._tabview.grid(row=0, column=1, sticky="nsew", padx=(0, 16), pady=16)
 
-        self._btn_traduzir = ctk.CTkButton(
-            btn_frame, text="▶  Traduzir", width=150, height=38,
-            font=ctk.CTkFont(size=14, weight="bold"), command=self._iniciar)
-        self._btn_traduzir.pack(side="left", padx=(0, 10))
+        self._tabview.add("Original")
+        self._tabview.add("Log")
 
-        self._btn_cancelar = ctk.CTkButton(
-            btn_frame, text="✕  Cancelar", width=120, height=38,
-            fg_color="#8B0000", hover_color="#600000",
-            command=self._cancelar, state="disabled")
-        self._btn_cancelar.pack(side="left")
+        # Preview tab
+        tab_orig = self._tabview.tab("Original")
+        tab_orig.columnconfigure(0, weight=1)
+        tab_orig.rowconfigure(0, weight=1)
+        self._preview = PreviewPanel(tab_orig)
+        self._preview.grid(row=0, column=0, sticky="nsew")
 
-        self._progress = ctk.CTkProgressBar(btn_frame, width=300)
-        self._progress.set(0)
-        self._progress.pack(side="left", padx=20)
+        # Log tab
+        tab_log = self._tabview.tab("Log")
+        tab_log.columnconfigure(0, weight=1)
+        tab_log.rowconfigure(1, weight=1)
 
-        self._lbl_status = ctk.CTkLabel(btn_frame, text="", text_color="gray60",
-                                        font=ctk.CTkFont(size=11))
-        self._lbl_status.pack(side="left")
+        log_hdr = ctk.CTkFrame(tab_log, fg_color="transparent")
+        log_hdr.grid(row=0, column=0, sticky="ew", padx=8, pady=(4, 2))
+        ctk.CTkLabel(log_hdr, text="Log de execução",
+                     font=ctk.CTkFont(size=12), text_color="gray60").pack(side="left")
+        ctk.CTkButton(log_hdr, text="Limpar", width=70, height=24,
+                      command=self._limpar_log).pack(side="right")
 
-        ctk.CTkLabel(btn_frame, text="Tema:").pack(side="right", padx=(0, 4))
-        self._tema_var = tk.StringVar(value=self._config.get("tema", "dark"))
-        ctk.CTkOptionMenu(btn_frame, variable=self._tema_var,
-                          values=["dark", "light", "system"],
-                          width=90, command=self._on_tema_change).pack(side="right", padx=(0, 6))
+        self._log_box = ctk.CTkTextbox(
+            tab_log, font=ctk.CTkFont(family="Courier", size=11),
+            wrap="word", state="disabled")
+        self._log_box.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
 
-    def _build_log_panel(self) -> None:
-        log_frame = ctk.CTkFrame(self)
-        log_frame.grid(row=3, column=0, sticky="nsew", padx=(20, 6), pady=(0, 14))
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(1, weight=1)
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    def _fmt_subtitle(self) -> str:
+        fmt = _FMT_BY_LBL.get(self._fmt_var.get(), "docx")
+        nomes = {"docx": "Word (.docx)", "txt": "Texto (.txt)",
+                 "md": "Markdown (.md)", "pdf": "PDF (.pdf)"}
+        return f"PDF → {nomes.get(fmt, fmt)}"
 
-        ctk.CTkLabel(log_frame, text="Log", font=ctk.CTkFont(size=12),
-                     text_color="gray60").grid(row=0, column=0, sticky="w", padx=10, pady=(6, 2))
-        ctk.CTkButton(log_frame, text="Limpar", width=70, height=24,
-                      command=self._limpar_log).grid(row=0, column=1, sticky="e", padx=10, pady=(6, 2))
+    def _toggle_tema(self) -> None:
+        nxt = "light" if self._tema_var.get() == "dark" else "dark"
+        self._tema_var.set(nxt)
+        self._tema_btn.configure(text=nxt)
+        ctk.set_appearance_mode(nxt)
+        self._config.set("tema", nxt)
 
-        self._log_box = ctk.CTkTextbox(log_frame, font=ctk.CTkFont(family="Courier", size=11),
-                                       wrap="word", state="disabled")
-        self._log_box.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 8))
+    def _swap_languages(self) -> None:
+        src = self._lang_src_var.get()
+        self._lang_src_var.set(self._lang_dst_var.get())
+        self._lang_dst_var.set(src)
 
-    def _build_preview_panel(self) -> None:
-        self._preview = PreviewPanel(self)
-        self._preview.grid(row=1, column=1, rowspan=3, sticky="nsew", padx=(6, 20), pady=(6, 14))
-
-    # ── Seletores de arquivo ─────────────────────────────────────────────────
+    # ── Seletores de arquivo ──────────────────────────────────────────────────
     def _selecionar_pdf(self) -> None:
         path = filedialog.askopenfilename(
             title="Selecionar PDF",
@@ -351,7 +458,7 @@ class SibylaApp(ctk.CTk):
             self._config.set("ultimo_docx", path)
 
     def _selecionar_saida(self) -> None:
-        fmt = self._fmt_var.get()
+        fmt = _FMT_BY_LBL.get(self._fmt_var.get(), "docx")
         ext_map = {"docx": (".docx", "Word", "*.docx"),
                    "txt":  (".txt",  "Texto", "*.txt"),
                    "md":   (".md",   "Markdown", "*.md"),
@@ -393,30 +500,32 @@ class SibylaApp(ctk.CTk):
         except Exception:
             pass
 
-    # ── Modo / Tema ──────────────────────────────────────────────────────────
-    def _on_modo_change(self) -> None:
-        if self._modo_var.get() in ("append", "replace"):
-            self._base_frame.grid()
+    # ── Modo / Formato / Tema ─────────────────────────────────────────────────
+    def _on_modo_change(self, value: str = None) -> None:
+        modo_lbl = self._modo_var.get()
+        if modo_lbl in ("Continuar", "Substituir"):
+            if not self._base_visible:
+                self._base_frame.pack(fill="x", padx=16, pady=(0, 8),
+                                      after=self._modo_seg)
+                self._base_visible = True
         else:
-            self._base_frame.grid_remove()
+            if self._base_visible:
+                self._base_frame.pack_forget()
+                self._base_visible = False
 
-    def _on_fmt_change(self) -> None:
-        """Atualiza extensão do arquivo de saída ao trocar o formato."""
-        fmt = self._fmt_var.get()
+    def _on_fmt_change(self, value: str = None) -> None:
+        fmt = _FMT_BY_LBL.get(self._fmt_var.get(), "docx")
         self._config.set("fmt", fmt)
         saida = self._saida_var.get().strip()
         if saida:
             base = os.path.splitext(saida)[0]
             ext  = {"docx": ".docx", "txt": ".txt", "md": ".md", "pdf": ".pdf"}.get(fmt, ".docx")
             self._saida_var.set(base + ext)
+        if hasattr(self, "_subtitle_lbl"):
+            self._subtitle_lbl.configure(text=self._fmt_subtitle())
 
-    def _on_tema_change(self, valor: str) -> None:
-        ctk.set_appearance_mode(valor)
-        self._config.set("tema", valor)
-
-    # ── Log ──────────────────────────────────────────────────────────────────
+    # ── Log ───────────────────────────────────────────────────────────────────
     def _flush_log(self) -> None:
-        """Drena a queue de log e atualiza o TextBox (roda na thread principal)."""
         try:
             while True:
                 texto = self._log_queue.get_nowait()
@@ -444,7 +553,7 @@ class SibylaApp(ctk.CTk):
         self._log_box.delete("1.0", "end")
         self._log_box.configure(state="disabled")
 
-    # ── Validação e coleta ───────────────────────────────────────────────────
+    # ── Validação e coleta ────────────────────────────────────────────────────
     def _collect_config(self) -> TranslationConfig | None:
         pdf = self._pdf_var.get().strip()
         if not pdf:
@@ -461,7 +570,8 @@ class SibylaApp(ctk.CTk):
         except ValueError:
             messagebox.showerror("Erro", "Intervalo de páginas inválido.")
             return None
-        modo = self._modo_var.get()
+
+        modo = _MODO_BY_LBL.get(self._modo_var.get(), "novo")
         base: str | None = None
         if modo in ("append", "replace"):
             base = self._base_var.get().strip() or None
@@ -471,8 +581,9 @@ class SibylaApp(ctk.CTk):
             if not os.path.isfile(base):
                 messagebox.showerror("Erro", f"Arquivo base não encontrado:\n{base}")
                 return None
+
+        fmt   = _FMT_BY_LBL.get(self._fmt_var.get(), "docx")
         saida = self._saida_var.get().strip()
-        fmt   = self._fmt_var.get()
         ext   = {"docx": ".docx", "txt": ".txt", "md": ".md", "pdf": ".pdf"}.get(fmt, ".docx")
         if not saida:
             nome_base = os.path.splitext(os.path.basename(pdf))[0]
@@ -481,22 +592,27 @@ class SibylaApp(ctk.CTk):
                              f"{nome_base}_p{ini}-p{fim}{ext}")
                 if modo == "novo" else base
             )
+
         lang_src = _lang_code(self._lang_src_var.get().strip()) or "en"
         lang_dst = _lang_code(self._lang_dst_var.get().strip()) or "pt"
         self._config.set("lang_src", lang_src)
         self._config.set("lang_dst", lang_dst)
         self._config.set("fmt", fmt)
+        self._config.set("modo", modo)
         return TranslationConfig(pdf=pdf, pag_ini=ini, pag_fim=fim,
                                  modo=modo, base=base, saida=saida,
                                  lang_src=lang_src, lang_dst=lang_dst, fmt=fmt)
 
-    # ── Execução ─────────────────────────────────────────────────────────────
+    # ── Execução ──────────────────────────────────────────────────────────────
     def _iniciar(self) -> None:
         cfg = self._collect_config()
         if cfg is None:
             return
 
-        self._log(f"▶ Iniciando tradução: páginas {cfg.pag_ini}–{cfg.pag_fim}  |  modo: {cfg.modo.upper()}  |  {cfg.lang_src} → {cfg.lang_dst}  |  {cfg.fmt.upper()}")
+        self._tabview.set("Log")
+        self._log(f"▶ Iniciando tradução: páginas {cfg.pag_ini}–{cfg.pag_fim}"
+                  f"  |  modo: {cfg.modo.upper()}  |  {cfg.lang_src} → {cfg.lang_dst}"
+                  f"  |  {cfg.fmt.upper()}")
         self._log(f"  Saída: {cfg.saida}\n")
         self._progress.set(0)
         self._lbl_status.configure(text="Iniciando…")
@@ -509,7 +625,6 @@ class SibylaApp(ctk.CTk):
         self._worker.start()
 
     def _run_worker(self, cfg: TranslationConfig) -> None:
-        """Roda na thread de background — não acessa widgets diretamente."""
         try:
             processar(cfg.pdf, cfg.pag_ini, cfg.pag_fim, cfg.saida, cfg.modo, cfg.base,
                       cancel_event=self._cancel_event,
@@ -534,9 +649,11 @@ class SibylaApp(ctk.CTk):
         self._btn_cancelar.configure(state="disabled")
         self._lbl_status.configure(text="Cancelando…")
 
-    # ── Encerramento ─────────────────────────────────────────────────────────
+    # ── Encerramento ──────────────────────────────────────────────────────────
     def on_close(self) -> None:
         self._cancel_event.set()
         self._preview.fechar()
         self.after_cancel(self._after_flush)
         self.destroy()
+
+
