@@ -6,11 +6,13 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
+import fitz
 import pdfplumber
 
 from ..models import TranslationConfig
 from ..config import AppConfig
 from ..engine import processar
+from ..engine.pdf_cutter import recortar_pdf
 from .log_redirector import LogRedirector
 from .preview_panel import PreviewPanel
 
@@ -391,6 +393,7 @@ class SibylaApp(ctk.CTk):
 
         self._tabview.add("Original")
         self._tabview.add("Log")
+        self._tabview.add("✂ Recortar")
 
         # Preview tab
         tab_orig = self._tabview.tab("Original")
@@ -415,6 +418,161 @@ class SibylaApp(ctk.CTk):
             tab_log, font=ctk.CTkFont(family="Courier", size=11),
             wrap="word", state="disabled")
         self._log_box.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+
+        # Recortar tab
+        self._build_cutter_tab(self._tabview.tab("✂ Recortar"))
+
+    # ── Recortar PDF tab ──────────────────────────────────────────────────────
+    def _build_cutter_tab(self, tab) -> None:
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(0, weight=1)
+
+        # Scrollable inner area so it works at any height
+        inner = ctk.CTkScrollableFrame(tab, fg_color="transparent")
+        inner.grid(row=0, column=0, sticky="nsew")
+        inner.columnconfigure(0, weight=1)
+
+        # Header
+        hdr_row = ctk.CTkFrame(inner, fg_color="transparent")
+        hdr_row.pack(fill="x", padx=16, pady=(18, 4))
+        ctk.CTkLabel(hdr_row, text="Recortar PDF",
+                     font=ctk.CTkFont(size=15, weight="bold")).pack(side="left")
+        ctk.CTkLabel(hdr_row, text="— extraia páginas para um novo arquivo",
+                     font=ctk.CTkFont(size=11), text_color="gray50").pack(
+            side="left", padx=8)
+
+        # ── ARQUIVO PDF ───────────────────────────────────────────────────────
+        self._section_header(inner, "ARQUIVO PDF")
+        c_pdf_card = ctk.CTkFrame(inner)
+        c_pdf_card.pack(fill="x", padx=16, pady=(0, 4))
+        c_pdf_card.columnconfigure(1, weight=1)
+
+        self._cut_pdf_var   = tk.StringVar()
+        self._cut_total_var = tk.StringVar(value="")
+        ctk.CTkLabel(c_pdf_card, text="📄", font=ctk.CTkFont(size=18),
+                     width=36).grid(row=0, column=0, rowspan=2, padx=(10, 2), pady=8)
+        ctk.CTkEntry(c_pdf_card, textvariable=self._cut_pdf_var,
+                     placeholder_text="Selecione o PDF…").grid(
+            row=0, column=1, sticky="ew", padx=(0, 4), pady=(8, 2))
+        ctk.CTkButton(c_pdf_card, text="…", width=32, height=28,
+                      command=self._cut_sel_pdf).grid(
+            row=0, column=2, padx=(0, 10), pady=(8, 2))
+        ctk.CTkLabel(c_pdf_card, textvariable=self._cut_total_var,
+                     text_color="gray50", font=ctk.CTkFont(size=10),
+                     anchor="w").grid(row=1, column=1, sticky="w", pady=(0, 8))
+
+        # ── PÁGINAS A EXTRAIR ─────────────────────────────────────────────────
+        self._section_header(inner, "PÁGINAS A EXTRAIR")
+        self._cut_pag_var = tk.StringVar()
+        ctk.CTkEntry(inner, textvariable=self._cut_pag_var,
+                     placeholder_text='Ex.: "1-3, 5, 7-9"  ou  "2"').pack(
+            fill="x", padx=16, pady=(0, 4))
+        hint_row = ctk.CTkFrame(inner, fg_color="transparent")
+        hint_row.pack(fill="x", padx=16, pady=(0, 4))
+        for hint in ["1-5 → intervalo", "1, 3, 5 → páginas isoladas",
+                     "1-3, 6, 8-10 → misto"]:
+            ctk.CTkLabel(hint_row, text=hint, font=ctk.CTkFont(size=10),
+                         text_color="gray50").pack(side="left", padx=(0, 16))
+
+        # ── ARQUIVO DE SAÍDA ──────────────────────────────────────────────────
+        self._section_header(inner, "ARQUIVO DE SAÍDA")
+        c_out_card = ctk.CTkFrame(inner)
+        c_out_card.pack(fill="x", padx=16, pady=(0, 4))
+        c_out_card.columnconfigure(0, weight=1)
+
+        self._cut_saida_var = tk.StringVar()
+        ctk.CTkEntry(c_out_card, textvariable=self._cut_saida_var,
+                     placeholder_text="nome automático se vazio").grid(
+            row=0, column=0, sticky="ew", padx=(10, 4), pady=8)
+        ctk.CTkButton(c_out_card, text="…", width=32, height=28,
+                      command=self._cut_sel_saida).grid(
+            row=0, column=1, padx=(0, 10), pady=8)
+
+        # ── Botão + status ────────────────────────────────────────────────────
+        ctk.CTkFrame(inner, height=1, fg_color="gray25").pack(
+            fill="x", padx=16, pady=(10, 0))
+
+        act_row = ctk.CTkFrame(inner, fg_color="transparent")
+        act_row.pack(fill="x", padx=16, pady=14)
+
+        self._btn_cortar = ctk.CTkButton(
+            act_row, text="✂  Recortar", height=40, width=160,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._iniciar_corte)
+        self._btn_cortar.pack(side="left")
+
+        self._cut_status_lbl = ctk.CTkLabel(
+            act_row, text="", font=ctk.CTkFont(size=11),
+            text_color="gray50", anchor="w", wraplength=380)
+        self._cut_status_lbl.pack(side="left", padx=16, fill="x", expand=True)
+
+    def _cut_sel_pdf(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Selecionar PDF para recortar",
+            filetypes=[("PDF", "*.pdf"), ("Todos", "*.*")],
+            initialdir=os.path.dirname(self._cut_pdf_var.get()) or os.getcwd(),
+        )
+        if not path:
+            return
+        self._cut_pdf_var.set(path)
+        try:
+            doc = fitz.open(path)
+            n = len(doc)
+            doc.close()
+            self._cut_total_var.set(f"{n} página{'s' if n != 1 else ''}")
+        except Exception:
+            self._cut_total_var.set("(não foi possível ler o PDF)")
+        # espelha no preview principal
+        self._preview.abrir(path)
+
+    def _cut_sel_saida(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="Salvar recorte como…",
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf"), ("Todos", "*.*")],
+            initialdir=os.path.dirname(self._cut_saida_var.get()) or os.getcwd(),
+        )
+        if path:
+            self._cut_saida_var.set(path)
+
+    def _iniciar_corte(self) -> None:
+        pdf = self._cut_pdf_var.get().strip()
+        if not pdf:
+            messagebox.showerror("Erro", "Selecione um arquivo PDF.")
+            return
+        if not os.path.isfile(pdf):
+            messagebox.showerror("Erro", f"PDF não encontrado:\n{pdf}")
+            return
+        pag_str = self._cut_pag_var.get().strip()
+        if not pag_str:
+            messagebox.showerror("Erro", "Informe as páginas a extrair.")
+            return
+
+        saida = self._cut_saida_var.get().strip()
+        if not saida:
+            base = os.path.splitext(os.path.basename(pdf))[0]
+            saida = os.path.join(os.path.dirname(pdf),
+                                 f"{base}_recorte.pdf")
+            self._cut_saida_var.set(saida)
+
+        self._btn_cortar.configure(state="disabled")
+        self._cut_status_lbl.configure(text="Recortando…", text_color="gray50")
+        threading.Thread(target=self._run_corte,
+                         args=(pdf, pag_str, saida), daemon=True).start()
+
+    def _run_corte(self, pdf: str, pag_str: str, saida: str) -> None:
+        try:
+            n = recortar_pdf(pdf, pag_str, saida)
+            msg  = f"✅ {n} página{'s' if n != 1 else ''} salva{'s' if n != 1 else ''} em: {saida}"
+            color = ("green3", "#4CAF50")
+        except Exception as e:
+            msg   = f"❌ {e}"
+            color = ("#cc4444", "#ff6666")
+        self.after(0, lambda: self._finalizar_corte(msg, color))
+
+    def _finalizar_corte(self, msg: str, color) -> None:
+        self._btn_cortar.configure(state="normal")
+        self._cut_status_lbl.configure(text=msg, text_color=color)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     def _fmt_subtitle(self) -> str:
