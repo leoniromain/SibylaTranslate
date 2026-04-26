@@ -487,37 +487,6 @@ class SibylaApp(_BASE_CLASS):
             text_color=("#2db862", "#3dcf76"), anchor="w")
         self._lang_detect_lbl.pack(fill="x", padx=14, pady=(3, 2))
 
-        # ══ ESTIMATIVA ═══════════════════════════════════════════════════════
-        self._section_header(parent, "ESTIMATIVA", "⚡")
-
-        est_card = ctk.CTkFrame(parent, corner_radius=8)
-        est_card.pack(fill="x", padx=14, pady=(0, 6))
-        est_card.columnconfigure(0, weight=1)
-        est_card.columnconfigure(1, weight=1)
-
-        self._est_duracao_var = tk.StringVar(value="—")
-        self._est_palavras_var = tk.StringVar(value="—")
-        self._est_tokens_var  = tk.StringVar(value="—")
-        self._est_custo_var   = tk.StringVar(value="—")
-
-        for r, (lbl, var, accent) in enumerate([
-            ("Duração",    self._est_duracao_var,  False),
-            ("Palavras",   self._est_palavras_var, True),
-            ("Tokens",     self._est_tokens_var,   False),
-            ("Custo est.", self._est_custo_var,    True),
-        ]):
-            col = r % 2
-            row = r // 2
-            cell = ctk.CTkFrame(est_card, fg_color="transparent")
-            cell.grid(row=row, column=col, sticky="ew",
-                      padx=12, pady=(10 if row == 0 else 0, 10 if row == 1 else 0))
-            ctk.CTkLabel(cell, text=lbl, font=ctk.CTkFont(size=10),
-                         text_color="gray50", anchor="w").pack(anchor="w")
-            tc = ("#1a8cff", "#5EB3FF") if accent else ("gray80", "gray80")
-            ctk.CTkLabel(cell, textvariable=var,
-                         font=ctk.CTkFont(size=13, weight="bold"),
-                         text_color=tc, anchor="w").pack(anchor="w")
-
         # ══ SAÍDA ════════════════════════════════════════════════════════════
         self._section_header(parent, "SAÍDA", "📤")
 
@@ -1018,45 +987,6 @@ class SibylaApp(_BASE_CLASS):
         if w:
             w.destroy()
 
-    def _update_estimativa(self) -> None:
-        """Dispara cálculo de estimativa em thread de fundo para não travar a UI."""
-        pdf = self._pdf_var.get()
-        if not pdf or not os.path.isfile(pdf):
-            return
-        try:
-            ini = int(self._pag_ini_var.get())
-            fim = int(self._pag_fim_var.get())
-        except ValueError:
-            return
-        self._est_duracao_var.set("calculando…")
-        threading.Thread(
-            target=self._calc_estimativa_bg,
-            args=(pdf, ini, fim),
-            daemon=True,
-        ).start()
-
-    def _calc_estimativa_bg(self, pdf: str, ini: int, fim: int) -> None:
-        """Executa em thread de fundo; atualiza widgets via after()."""
-        try:
-            with pdfplumber.open(pdf) as p:
-                palavras = 0
-                for pg in p.pages[ini - 1: fim]:
-                    txt = pg.extract_text() or ""
-                    palavras += len(txt.split())
-        except Exception:
-            self.after(0, lambda: self._est_duracao_var.set("erro"))
-            return
-        n_pag = max(1, fim - ini + 1)
-        minutos = max(1, round(n_pag * 0.8))
-        tokens  = round(palavras * 1.3 / 1000)
-        custo   = tokens * 0.002
-        def _apply() -> None:
-            self._est_duracao_var.set(f"~{minutos} min")
-            self._est_palavras_var.set(f"{palavras:,}".replace(",", "."))
-            self._est_tokens_var.set(f"~{tokens}k")
-            self._est_custo_var.set(f"~${custo:.2f}")
-        self.after(0, _apply)
-
     def _historico_render(self) -> None:
         if not hasattr(self, "_hist_scroll"):
             return
@@ -1210,7 +1140,6 @@ class SibylaApp(_BASE_CLASS):
         self._preview.abrir(pdf)
         self._tabview.set("Original")
         self._toggle_main_view()
-        self.after(300, self._update_estimativa)
         if _LANGDETECT_AVAILABLE:
             threading.Thread(target=self._detect_lang_bg,
                              args=(pdf,), daemon=True).start()
