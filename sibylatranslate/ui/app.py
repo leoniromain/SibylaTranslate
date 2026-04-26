@@ -396,7 +396,8 @@ class SibylaApp(_BASE_CLASS):
         self._section_header(parent, "ARQUIVO", "📁")
 
         # Card com miniatura + nome + info + toggle open/close
-        pdf_card = ctk.CTkFrame(parent, corner_radius=8)
+        self._pdf_card = ctk.CTkFrame(parent, corner_radius=8)
+        pdf_card = self._pdf_card
         pdf_card.pack(fill="x", padx=14, pady=(0, 6))
         pdf_card.columnconfigure(1, weight=1)
 
@@ -1309,12 +1310,19 @@ class SibylaApp(_BASE_CLASS):
         self._log_box.configure(state="disabled")
 
     # ── Validação e coleta ────────────────────────────────────────────────────
+    def _flash_pdf_card(self) -> None:
+        self._pdf_card.configure(border_width=2, border_color="#e05555")
+        self.after(1200, lambda: self._pdf_card.configure(
+            border_width=0, border_color="transparent"))
+
     def _collect_config(self) -> TranslationConfig | None:
         pdf = self._pdf_var.get().strip()
         if not pdf:
+            self._flash_pdf_card()
             messagebox.showerror("Erro", "Selecione um arquivo PDF.")
             return None
         if not os.path.isfile(pdf):
+            self._flash_pdf_card()
             messagebox.showerror("Erro", f"PDF não encontrado:\n{pdf}")
             return None
         try:
@@ -1354,15 +1362,28 @@ class SibylaApp(_BASE_CLASS):
         self._config.set("lang_dst", lang_dst)
         self._config.set("fmt", fmt)
         self._config.set("modo", modo)
+        glossario = self._config.get("glossario", [])
         return TranslationConfig(pdf=pdf, pag_ini=ini, pag_fim=fim,
                                  modo=modo, base=base, saida=saida,
-                                 lang_src=lang_src, lang_dst=lang_dst, fmt=fmt)
+                                 lang_src=lang_src, lang_dst=lang_dst, fmt=fmt,
+                                 glossario=glossario)
 
     # ── Execução ──────────────────────────────────────────────────────────────
     def _iniciar(self) -> None:
         cfg = self._collect_config()
         if cfg is None:
             return
+
+        if not self._config.get("ocr_aviso_visto", False):
+            self._config.set("ocr_aviso_visto", True)
+            messagebox.showinfo(
+                "Aviso — OCR",
+                "Se alguma página do PDF não contiver texto (ex.: imagem escaneada), "
+                "o OCR será ativado automaticamente.\n\n"
+                "Na primeira vez, o EasyOCR precisa baixar o modelo de reconhecimento "
+                "(~100 MB). Isso pode levar alguns minutos e a interface parecerá "
+                "parada — isso é normal. As execuções seguintes serão instantâneas."
+            )
 
         self._tabview.set("Log")
         self._log(f"▶ Iniciando tradução: páginas {cfg.pag_ini}–{cfg.pag_fim}"
@@ -1389,7 +1410,8 @@ class SibylaApp(_BASE_CLASS):
         try:
             processar(cfg.pdf, cfg.pag_ini, cfg.pag_fim, cfg.saida, cfg.modo, cfg.base,
                       cancel_event=self._cancel_event,
-                      lang_src=cfg.lang_src, lang_dst=cfg.lang_dst, fmt=cfg.fmt)
+                      lang_src=cfg.lang_src, lang_dst=cfg.lang_dst, fmt=cfg.fmt,
+                      glossario=cfg.glossario)
             self._log_queue.put(f"\n✅ Concluído! Arquivo salvo em:\n   {cfg.saida}\n")
             # Populate compare view with original text
             self.after(0, lambda: self._populate_compare(cfg))

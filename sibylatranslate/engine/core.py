@@ -9,6 +9,7 @@ from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from .translation import traduzir_texto
+from . import translation as _translation_module
 from .image_utils import pagina_para_imagem_bytes
 from .ocr import ocr_traduzir_imagem
 from .pdf_reader import extrair_blocos_pagina, extrair_imagens_da_pagina
@@ -94,7 +95,8 @@ def processar(pdf_path: str, pag_ini: int, pag_fim: int, saida: str,
               modo: str = "novo", arquivo_base: str | None = None,
               cancel_event: threading.Event | None = None,
               lang_src: str = "en", lang_dst: str = "pt",
-              fmt: str = "docx") -> None:
+              fmt: str = "docx",
+              glossario: list[str] | None = None) -> None:
     """
     Processa um PDF e salva tradução no formato escolhido.
 
@@ -110,6 +112,10 @@ def processar(pdf_path: str, pag_ini: int, pag_fim: int, saida: str,
     print(f"Idiomas : {lang_src} → {lang_dst}")
     print(f"Formato : {fmt.upper()}")
     print(f"Saída   : {saida}\n")
+
+    if glossario:
+        _translation_module.NOMES_PROTEGIDOS.update(glossario)
+        print(f"Glossário: {len(glossario)} termos protegidos\n")
 
     # ── Formatos texto puro (txt / md) ────────────────────────────────────────
     if fmt in _FORMATOS_TEXTO:

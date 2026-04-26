@@ -12,3 +12,4 @@ class TranslationConfig:
     lang_src: str = "en"
     lang_dst: str = "pt"
     fmt: str = "docx"
+    glossario: list[str] = field(default_factory=list)

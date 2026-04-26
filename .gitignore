@@ -10,9 +10,20 @@ venv/
 # PDFs e arquivos gerados (não versionar conteúdo de livros)
 *.pdf
 *.docx
+*.txt
+*.md
+!README.md
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
 
 # EasyOCR cache de modelos
 .EasyOCR/
+
+# App config gerado em runtime
+config.json
 
 # VS Code
 .vscode/
