@@ -1,4 +1,8 @@
 {
   "tema": "dark",
-  "ultimo_pdf": "C:/leonigit/traducoes/Mastering Witchcraft.pdf"
+  "ultimo_pdf": "C:/leonigit/traducoes/Mastering Witchcraft.pdf",
+  "lang_src": "en",
+  "lang_dst": "pt",
+  "fmt": "docx",
+  "modo": "novo"
 }

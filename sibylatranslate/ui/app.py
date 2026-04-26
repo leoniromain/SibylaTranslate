@@ -5,6 +5,7 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
+from PIL import Image, ImageTk
 import customtkinter as ctk
 import fitz
 import pdfplumber
@@ -200,8 +201,6 @@ class SibylaApp(ctk.CTk):
         self._build_sidebar()
         self._build_main_area()
         ctk.set_appearance_mode(self._tema_var.get())
-        if self._pdf_var.get():
-            self.after(200, self._atualizar_total_paginas)
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     def _build_sidebar(self) -> None:
@@ -283,7 +282,7 @@ class SibylaApp(ctk.CTk):
         pdf_card.pack(fill="x", padx=14, pady=(0, 6))
         pdf_card.columnconfigure(1, weight=1)
 
-        self._pdf_var = tk.StringVar(value=self._config.get("ultimo_pdf", ""))
+        self._pdf_var = tk.StringVar(value="")
 
         # Ícone PDF (miniatura simples)
         ctk.CTkLabel(pdf_card, text="📄", font=ctk.CTkFont(size=28),
@@ -480,7 +479,8 @@ class SibylaApp(ctk.CTk):
 
     # ── Main area (tabbed) ────────────────────────────────────────────────────
     def _build_main_area(self) -> None:
-        self._tabview = ctk.CTkTabview(self, anchor="nw")
+        self._tabview = ctk.CTkTabview(self, anchor="nw",
+                                       command=self._on_tab_change)
         self._tabview.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=(12, 12))
 
         for tab_name in ("Comparar", "Original", "Traduzido", "Log", "Histórico", "✂ Recortar"):
@@ -538,117 +538,127 @@ class SibylaApp(ctk.CTk):
         tab.columnconfigure(0, weight=1)
         tab.columnconfigure(1, weight=1)
         tab.rowconfigure(1, weight=1)
-        tab.rowconfigure(2, weight=0)
 
-        src_lbl = _lang_code(self._lang_src_var.get() if hasattr(self, "_lang_src_var")
-                             else "en").upper()
-        dst_lbl = _lang_code(self._lang_dst_var.get() if hasattr(self, "_lang_dst_var")
-                             else "pt").upper()
-
-        # ── Original header ────────────────────────────────────────────────
+        # ── Headers ────────────────────────────────────────────────────────
         orig_hdr = ctk.CTkFrame(tab, fg_color="transparent")
         orig_hdr.grid(row=0, column=0, sticky="ew", padx=(8, 4), pady=(6, 2))
         self._cmp_orig_lbl = ctk.CTkLabel(
-            orig_hdr, text=f"ORIGINAL · {src_lbl}",
+            orig_hdr, text="ORIGINAL · EN",
             font=ctk.CTkFont(size=10, weight="bold"), text_color="gray55")
         self._cmp_orig_lbl.pack(side="left")
-        nav_orig = ctk.CTkFrame(orig_hdr, fg_color="transparent")
-        nav_orig.pack(side="right")
-        ctk.CTkButton(nav_orig, text="◀", width=28, height=24,
-                      command=lambda: self._cmp_nav("orig", -1)).pack(side="left", padx=2)
-        self._cmp_orig_pag_lbl = ctk.CTkLabel(
-            nav_orig, text="— / —", font=ctk.CTkFont(size=11), width=60)
-        self._cmp_orig_pag_lbl.pack(side="left")
-        ctk.CTkButton(nav_orig, text="▶", width=28, height=24,
-                      command=lambda: self._cmp_nav("orig", 1)).pack(side="left", padx=2)
 
-        # ── Traduzido header ───────────────────────────────────────────────
         trad_hdr = ctk.CTkFrame(tab, fg_color="transparent")
         trad_hdr.grid(row=0, column=1, sticky="ew", padx=(4, 8), pady=(6, 2))
         self._cmp_trad_lbl = ctk.CTkLabel(
-            trad_hdr, text=f"TRADUZIDO · {dst_lbl}",
+            trad_hdr, text="TRADUZIDO · PT",
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color=("#1a8cff", "#5EB3FF"))
         self._cmp_trad_lbl.pack(side="left")
-        nav_trad = ctk.CTkFrame(trad_hdr, fg_color="transparent")
-        nav_trad.pack(side="right")
-        ctk.CTkButton(nav_trad, text="◀", width=28, height=24,
-                      command=lambda: self._cmp_nav("trad", -1)).pack(side="left", padx=2)
-        self._cmp_trad_pag_lbl = ctk.CTkLabel(
-            nav_trad, text="— / —", font=ctk.CTkFont(size=11), width=60)
-        self._cmp_trad_pag_lbl.pack(side="left")
-        ctk.CTkButton(nav_trad, text="▶", width=28, height=24,
-                      command=lambda: self._cmp_nav("trad", 1)).pack(side="left", padx=2)
 
-        # ── Text panels ────────────────────────────────────────────────────
-        self._cmp_orig_box = ctk.CTkTextbox(
-            tab, font=ctk.CTkFont(family="Georgia", size=12),
-            wrap="word", state="disabled", corner_radius=8)
-        self._cmp_orig_box.grid(row=1, column=0, sticky="nsew",
-                                padx=(8, 4), pady=(0, 4))
+        # ── PDF canvases ────────────────────────────────────────────────────
+        bg = "#1e1e1e"
+        self._cmp_orig_canvas = tk.Canvas(tab, bg=bg, highlightthickness=0)
+        self._cmp_orig_canvas.grid(row=1, column=0, sticky="nsew",
+                                   padx=(8, 4), pady=(0, 0))
+        self._cmp_orig_canvas.bind("<Configure>", lambda _e: self._cmp_render())
 
-        self._cmp_trad_box = ctk.CTkTextbox(
-            tab, font=ctk.CTkFont(family="Georgia", size=12),
-            wrap="word", state="disabled", corner_radius=8)
-        self._cmp_trad_box.grid(row=1, column=1, sticky="nsew",
-                                padx=(4, 8), pady=(0, 4))
+        self._cmp_trad_canvas = tk.Canvas(tab, bg=bg, highlightthickness=0)
+        self._cmp_trad_canvas.grid(row=1, column=1, sticky="nsew",
+                                   padx=(4, 8), pady=(0, 0))
+        self._cmp_trad_canvas.bind("<Configure>", lambda _e: self._cmp_render())
 
-        # ── Status bar ─────────────────────────────────────────────────────
-        status_bar = ctk.CTkFrame(tab, height=28, corner_radius=0,
-                                  fg_color=("gray90", "gray15"))
-        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew",
-                        padx=0, pady=0)
-        status_bar.columnconfigure(1, weight=1)
+        # ── Shared navigation + status bar ─────────────────────────────────
+        bottom = ctk.CTkFrame(tab, height=36, corner_radius=0,
+                              fg_color=("gray90", "gray15"))
+        bottom.grid(row=2, column=0, columnspan=2, sticky="ew")
+        bottom.columnconfigure(0, weight=1)
+        bottom.columnconfigure(2, weight=1)
 
-        diff_row = ctk.CTkFrame(status_bar, fg_color="transparent")
-        diff_row.pack(side="left", padx=12)
-        for dot, label, color in [
-            ("●", "Adicionado 0",  ("#1f8a3e", "#3dcf76")),
-            ("●", "Alterado 0",   ("#b87a00", "#e0a020")),
-            ("●", "Removido 0",   ("#8a1f1f", "#cf4040")),
-        ]:
-            ctk.CTkLabel(diff_row, text=f"{dot} {label}",
-                         font=ctk.CTkFont(size=10), text_color=color).pack(
-                side="left", padx=(0, 14))
+        ctk.CTkButton(bottom, text="◀", width=32, height=26,
+                      command=lambda: self._cmp_nav(-1)).grid(
+            row=0, column=0, sticky="e", padx=(12, 4), pady=5)
+        self._cmp_pag_lbl = ctk.CTkLabel(
+            bottom, text="— / —", font=ctk.CTkFont(size=11), width=70)
+        self._cmp_pag_lbl.grid(row=0, column=1)
+        ctk.CTkButton(bottom, text="▶", width=32, height=26,
+                      command=lambda: self._cmp_nav(1)).grid(
+            row=0, column=2, sticky="w", padx=(4, 12), pady=5)
 
-        self._cmp_sync_lbl = ctk.CTkLabel(
-            status_bar, text="● Scroll sincronizado",
-            font=ctk.CTkFont(size=10), text_color=("#1f8a3e", "#3dcf76"))
-        self._cmp_sync_lbl.pack(side="right", padx=12)
+        self._cmp_status_lbl = ctk.CTkLabel(
+            bottom, text="Pronto.",
+            font=ctk.CTkFont(size=10), text_color="gray50")
+        self._cmp_status_lbl.grid(row=0, column=3, sticky="e", padx=16)
 
-        ctk.CTkLabel(status_bar, text="Log  Pronto.",
-                     font=ctk.CTkFont(size=10), text_color="gray50").pack(
-            side="left", padx=4)
+        # ── Internal state ─────────────────────────────────────────────────
+        self._cmp_page        = 1
+        self._cmp_total       = 0
+        self._cmp_fitz_orig   = None   # fitz.Document original
+        self._cmp_fitz_trad   = None   # fitz.Document traduzido (se PDF)
+        self._cmp_pages_trad: list[str] = []  # fallback texto
+        self._cmp_photo_orig  = None   # evita GC
+        self._cmp_photo_trad  = None
+        self._cmp_orig_img_id = None
+        self._cmp_trad_img_id = None
 
-        # internal state
-        self._cmp_page  = 1
-        self._cmp_total = 0
-        self._cmp_pages_orig: list[str] = []
-        self._cmp_pages_trad: list[str] = []
-
-    def _cmp_nav(self, side: str, delta: int) -> None:
+    def _cmp_nav(self, delta: int) -> None:
         if not self._cmp_total:
             return
         self._cmp_page = max(1, min(self._cmp_total, self._cmp_page + delta))
         self._cmp_render()
 
     def _cmp_render(self) -> None:
-        p = self._cmp_page
         t = self._cmp_total
-        pag_str = f"{p} / {t}" if t else "— / —"
-        self._cmp_orig_pag_lbl.configure(text=pag_str)
-        self._cmp_trad_pag_lbl.configure(text=pag_str)
+        p = self._cmp_page
+        self._cmp_pag_lbl.configure(text=f"{p} / {t}" if t else "— / —")
 
-        def _set(box: ctk.CTkTextbox, content: str) -> None:
-            box.configure(state="normal")
-            box.delete("1.0", "end")
-            box.insert("1.0", content)
-            box.configure(state="disabled")
+        self._cmp_render_side(
+            self._cmp_orig_canvas,
+            self._cmp_fitz_orig, p,
+            "_cmp_photo_orig", "_cmp_orig_img_id",
+            fallback=None)
 
-        orig_text = self._cmp_pages_orig[p - 1] if self._cmp_pages_orig else ""
-        trad_text = self._cmp_pages_trad[p - 1] if self._cmp_pages_trad else ""
-        _set(self._cmp_orig_box, orig_text)
-        _set(self._cmp_trad_box, trad_text)
+        trad_text = (self._cmp_pages_trad[p - 1]
+                     if self._cmp_pages_trad and p <= len(self._cmp_pages_trad)
+                     else None)
+        self._cmp_render_side(
+            self._cmp_trad_canvas,
+            self._cmp_fitz_trad, p,
+            "_cmp_photo_trad", "_cmp_trad_img_id",
+            fallback=trad_text)
+
+    def _cmp_render_side(self, canvas: tk.Canvas, doc, page_num: int,
+                         photo_attr: str, img_id_attr: str,
+                         fallback: str | None) -> None:
+        cw = canvas.winfo_width()
+        ch = canvas.winfo_height()
+        if cw < 10 or ch < 10:
+            return
+        canvas.delete("all")
+        setattr(self, img_id_attr, None)
+
+        if doc and self._cmp_total and page_num <= len(doc):
+            # Render PDF page
+            page = doc[page_num - 1]
+            pr = page.rect
+            scale = min(cw / pr.width, ch / pr.height) * 0.97
+            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            photo = ImageTk.PhotoImage(img)
+            setattr(self, photo_attr, photo)
+            img_id = canvas.create_image(cw // 2, ch // 2, anchor="center",
+                                         image=photo)
+            setattr(self, img_id_attr, img_id)
+        elif fallback is not None:
+            # Render text fallback
+            pad = 20
+            canvas.create_text(pad, pad, anchor="nw", text=fallback,
+                                fill="#cccccc", font=("Georgia", 12),
+                                width=max(10, cw - pad * 2))
+        else:
+            # Empty placeholder
+            canvas.create_text(cw // 2, ch // 2, anchor="center",
+                                text="Sem conteúdo", fill="#555555",
+                                font=("Helvetica", 11))
 
     # ── Recortar PDF tab ──────────────────────────────────────────────────────
     def _build_cutter_tab(self, tab) -> None:
@@ -865,7 +875,7 @@ class SibylaApp(ctk.CTk):
             w.destroy()
 
     def _update_estimativa(self) -> None:
-        """Atualiza métricas de estimativa com base no PDF e range de páginas."""
+        """Dispara cálculo de estimativa em thread de fundo para não travar a UI."""
         pdf = self._pdf_var.get()
         if not pdf or not os.path.isfile(pdf):
             return
@@ -874,31 +884,38 @@ class SibylaApp(ctk.CTk):
             fim = int(self._pag_fim_var.get())
         except ValueError:
             return
+        self._est_duracao_var.set("calculando…")
+        threading.Thread(
+            target=self._calc_estimativa_bg,
+            args=(pdf, ini, fim),
+            daemon=True,
+        ).start()
+
+    def _calc_estimativa_bg(self, pdf: str, ini: int, fim: int) -> None:
+        """Executa em thread de fundo; atualiza widgets via after()."""
         try:
             with pdfplumber.open(pdf) as p:
-                total_pag = len(p.pages)
                 palavras = 0
                 for pg in p.pages[ini - 1: fim]:
                     txt = pg.extract_text() or ""
                     palavras += len(txt.split())
         except Exception:
+            self.after(0, lambda: self._est_duracao_var.set("erro"))
             return
         n_pag = max(1, fim - ini + 1)
-        # ~200 palavras/min tradução online, ~1.3 tokens/palavra, $0.002/1k tokens (estimativa)
         minutos = max(1, round(n_pag * 0.8))
         tokens  = round(palavras * 1.3 / 1000)
         custo   = tokens * 0.002
-        self._est_duracao_var.set(f"~{minutos} min")
-        self._est_palavras_var.set(f"{palavras:,}".replace(",", "."))
-        self._est_tokens_var.set(f"~{tokens}k")
-        self._est_custo_var.set(f"~${custo:.2f}")
-        # idioma detectado
-        lang = self._config.get("lang_src_detected", "")
-        conf = self._config.get("lang_src_conf", 0)
-        if lang and lang in _DISPLAY_BY_CODE:
-            nome = _DISPLAY_BY_CODE[lang].split(" (")[0]
-            self._lang_detect_lbl.configure(
-                text=f"● Idioma detectado: {nome} ({round(conf*100)}%)")
+        def _apply() -> None:
+            self._est_duracao_var.set(f"~{minutos} min")
+            self._est_palavras_var.set(f"{palavras:,}".replace(",", "."))
+            self._est_tokens_var.set(f"~{tokens}k")
+            self._est_custo_var.set(f"~${custo:.2f}")
+        self.after(0, _apply)
+
+    def _on_tab_change(self) -> None:
+        if self._tabview.get() == "Original":
+            self.after(50, self._preview.renderizar)
 
     def _toggle_tema(self) -> None:
         nxt = "light" if self._tema_var.get() == "dark" else "dark"
@@ -966,6 +983,7 @@ class SibylaApp(ctk.CTk):
             self._total_var.set("(não foi possível ler o PDF)")
             return
         self._preview.abrir(pdf)
+        self._tabview.set("Original")
         self.after(300, self._update_estimativa)
 
     def _todas_paginas(self) -> None:
@@ -1118,22 +1136,84 @@ class SibylaApp(ctk.CTk):
             self.after(0, self._finalizar)
 
     def _populate_compare(self, cfg: TranslationConfig) -> None:
-        """Extrai texto das páginas originais e preenche o painel Comparar."""
-        try:
-            with pdfplumber.open(cfg.pdf) as p:
-                pages = p.pages[cfg.pag_ini - 1: cfg.pag_fim]
-                self._cmp_pages_orig = [pg.extract_text() or "" for pg in pages]
-        except Exception:
-            self._cmp_pages_orig = []
+        """Abre original e traduzido como fitz docs e preenche o painel Comparar."""
+        # Fecha docs anteriores
+        for attr in ("_cmp_fitz_orig", "_cmp_fitz_trad"):
+            doc = getattr(self, attr, None)
+            if doc:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
+            setattr(self, attr, None)
         self._cmp_pages_trad = []
-        self._cmp_total = len(self._cmp_pages_orig)
-        self._cmp_page  = 1
-        src_lbl = cfg.lang_src.upper()
-        dst_lbl = cfg.lang_dst.upper()
-        self._cmp_orig_lbl.configure(text=f"ORIGINAL · {src_lbl}")
-        self._cmp_trad_lbl.configure(text=f"TRADUZIDO · {dst_lbl}")
-        self._cmp_render()
+
+        # Abre original
+        try:
+            self._cmp_fitz_orig = fitz.open(cfg.pdf)
+            self._cmp_total = len(self._cmp_fitz_orig)
+        except Exception:
+            self._cmp_fitz_orig = None
+            self._cmp_total = 0
+
+        # Abre traduzido (se for PDF) ou lê texto como fallback
+        if cfg.fmt == "pdf" and os.path.isfile(cfg.saida):
+            try:
+                self._cmp_fitz_trad = fitz.open(cfg.saida)
+            except Exception:
+                self._cmp_fitz_trad = None
+        else:
+            self._cmp_pages_trad = self._read_translated_pages(cfg.saida, cfg.fmt)
+
+        self._cmp_page = 1
+        self._cmp_orig_lbl.configure(text=f"ORIGINAL · {cfg.lang_src.upper()}")
+        self._cmp_trad_lbl.configure(text=f"TRADUZIDO · {cfg.lang_dst.upper()}")
+        if self._cmp_total:
+            self._cmp_status_lbl.configure(text=f"{self._cmp_total} páginas")
+
+        # Preenche aba Traduzido com texto
+        full_trad_pages = self._read_translated_pages(cfg.saida, cfg.fmt)
+        full_trad = "\n\n".join(full_trad_pages)
+        self._trad_box.configure(state="normal")
+        self._trad_box.delete("1.0", "end")
+        self._trad_box.insert("1.0", full_trad)
+        self._trad_box.configure(state="disabled")
+
         self._tabview.set("Comparar")
+        self.after(80, self._cmp_render)
+
+    def _read_translated_pages(self, saida: str, fmt: str) -> list[str]:
+        """Lê o arquivo de saída e retorna lista de páginas (melhor esforço)."""
+        if not saida or not os.path.isfile(saida):
+            return []
+        try:
+            if fmt in ("txt", "md"):
+                text = open(saida, encoding="utf-8").read()
+                # Separa por form-feed (\x0c) que alguns geradores inserem
+                parts = [p.strip() for p in text.split("\x0c") if p.strip()]
+                return parts if parts else [text.strip()]
+            elif fmt == "pdf":
+                with pdfplumber.open(saida) as p:
+                    return [pg.extract_text() or "" for pg in p.pages]
+            elif fmt == "docx":
+                from docx import Document  # já é dependência do projeto
+                doc = Document(saida)
+                paragraphs = [par.text for par in doc.paragraphs]
+                # Tenta quebrar em "páginas" por parágrafos em branco duplos
+                pages, current = [], []
+                for line in paragraphs:
+                    if line.strip() == "":
+                        if current:
+                            pages.append("\n".join(current))
+                            current = []
+                    else:
+                        current.append(line)
+                if current:
+                    pages.append("\n".join(current))
+                return pages if pages else ["\n".join(paragraphs)]
+        except Exception:
+            pass
+        return []
 
     def _finalizar(self) -> None:
         self._btn_traduzir.configure(state="normal")
@@ -1152,6 +1232,13 @@ class SibylaApp(ctk.CTk):
     def on_close(self) -> None:
         self._cancel_event.set()
         self._preview.fechar()
+        for attr in ("_cmp_fitz_orig", "_cmp_fitz_trad"):
+            doc = getattr(self, attr, None)
+            if doc:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
         self.after_cancel(self._after_flush)
         self.destroy()
 

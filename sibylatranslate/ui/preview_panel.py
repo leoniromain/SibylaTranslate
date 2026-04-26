@@ -36,6 +36,7 @@ class PreviewPanel(ctk.CTkFrame):
         self._canvas.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
         self._canvas.bind("<Configure>", lambda _e: self.renderizar())
 
+
         nav = ctk.CTkFrame(self, fg_color="transparent")
         nav.grid(row=2, column=0, pady=(2, 8))
 
@@ -65,10 +66,22 @@ class PreviewPanel(ctk.CTkFrame):
             self._fitz_doc = fitz.open(pdf_path)
             self._total = len(self._fitz_doc)
             self._page = 1
-            self.renderizar()
         except Exception:
             self._fitz_doc = None
             self._total = 0
+            return
+        # Canvas pode ainda não ter dimensões; agenda retry até estar pronto
+        self._renderizar_com_retry()
+
+    def _renderizar_com_retry(self, tentativas: int = 20) -> None:
+        """Chama renderizar(); se o canvas ainda não tiver dimensões, tenta novamente."""
+        cw = self._canvas.winfo_width()
+        ch = self._canvas.winfo_height()
+        if cw < 10 or ch < 10:
+            if tentativas > 0:
+                self.after(80, lambda: self._renderizar_com_retry(tentativas - 1))
+            return
+        self.renderizar()
 
     def renderizar(self) -> None:
         """Renderiza a página atual no canvas, ajustando ao tamanho disponível."""
