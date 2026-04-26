@@ -1,1511 +1,1189 @@
 import os
+import sys
 import re
-import time
-import queue
 import threading
-import tkinter as tk
-from tkinter import filedialog, messagebox
+from datetime import datetime, timezone
 
-try:
-    from tkinterdnd2 import TkinterDnD, DND_FILES
-    _DND_AVAILABLE = True
-except ImportError:
-    _DND_AVAILABLE = False
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton,
+    QLineEdit, QSpinBox, QComboBox, QScrollArea, QSplitter, QSizePolicy,
+    QFileDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget,
+    QProgressBar, QButtonGroup, QMessageBox, QDialog, QDialogButtonBox,
+)
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QUrl, QSize
+from PyQt6.QtGui import QFont, QAction, QDragEnterEvent, QDropEvent, QCursor
 
-try:
-    from langdetect import detect as _langdetect, DetectorFactory
-    DetectorFactory.seed = 0
-    _LANGDETECT_AVAILABLE = True
-except ImportError:
-    _LANGDETECT_AVAILABLE = False
+BG_APP      = "#F0F0F0"
+BG_SURFACE  = "#FFFFFF"
+BG_INPUT    = "#FAFAFA"
+BG_DROPZONE = "#F5F9FF"
+BORDER      = "#DDDDDD"
+BORDER_BLUE = "#B8D4F0"
+PRIMARY     = "#185FA5"
+PRIMARY_HOV = "#0C447C"
+TEXT_MAIN   = "#1A1A1A"
+TEXT_SEC    = "#666666"
+TEXT_LABEL  = "#185FA5"
+SUCCESS     = "#1D9E75"
+WARNING     = "#BA7517"
+DANGER      = "#E24B4A"
 
-try:
-    from plyer import notification as _plyer_notification
-    _PLYER_AVAILABLE = True
-except ImportError:
-    _PLYER_AVAILABLE = False
+STYLESHEET = f"""
+QMainWindow, QWidget {{ background-color: {BG_APP}; color: {TEXT_MAIN}; }}
+QMenuBar {{ background-color: {BG_SURFACE}; border-bottom: 1px solid {BORDER}; }}
+QMenuBar::item {{ padding: 4px 10px; background: transparent; }}
+QMenuBar::item:selected {{ background-color: {BG_APP}; }}
+QMenu {{ background-color: {BG_SURFACE}; border: 1px solid {BORDER}; }}
+QMenu::item {{ padding: 6px 20px; }}
+QMenu::item:selected {{ background-color: #EEF4FF; color: {PRIMARY}; }}
+QMenu::separator {{ height: 1px; background: {BORDER}; margin: 2px 0; }}
+QScrollBar:vertical {{ background: transparent; width: 8px; border: none; }}
+QScrollBar::handle:vertical {{ background: #CCCCCC; border-radius: 4px; min-height: 30px; }}
+QScrollBar::handle:vertical:hover {{ background: #AAAAAA; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; border: none; }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+QLineEdit, QComboBox, QSpinBox {{
+    background-color: {BG_SURFACE}; border: 1px solid {BORDER};
+    border-radius: 6px; padding: 5px 8px;
+    selection-background-color: #D0E8FF;
+}}
+QComboBox::drop-down {{ border: none; }}
+QProgressBar {{
+    background-color: #E8E8E8; border: none; border-radius: 3px;
+    text-align: center;
+}}
+QProgressBar::chunk {{ background-color: {PRIMARY}; border-radius: 3px; }}
+QToolTip {{ background-color: {BG_SURFACE}; border: 1px solid {BORDER}; color: {TEXT_MAIN}; padding: 4px; }}
+"""
 
-from PIL import Image, ImageTk
-import customtkinter as ctk
-import fitz
-import pdfplumber
-
-from ..models import TranslationConfig
-from ..config import AppConfig
-from ..engine import processar
-from ..engine.pdf_cutter import recortar_pdf
-from .log_redirector import LogRedirector
-from .preview_panel import PreviewPanel
-
-
-# ── Tabela de idiomas suportados pelo Google Translate ──────────────────────
-_LANGS: list[tuple[str, str]] = [
-    ("auto",  "auto-detectar"),
-    ("af",    "Africâner"),
-    ("ar",    "Árabe"),
-    ("hy",    "Armênio"),
-    ("az",    "Azerbaijano"),
-    ("eu",    "Basco"),
-    ("bn",    "Bengali"),
-    ("bg",    "Búlgaro"),
-    ("ca",    "Catalão"),
-    ("zh-CN", "Chinês (simpl.)"),
-    ("zh-TW", "Chinês (trad.)"),
-    ("ko",    "Coreano"),
-    ("hr",    "Croata"),
-    ("da",    "Dinamarquês"),
-    ("sk",    "Eslovaco"),
-    ("sl",    "Esloveno"),
-    ("es",    "Espanhol"),
-    ("et",    "Estoniano"),
-    ("fi",    "Finlandês"),
-    ("fr",    "Francês"),
-    ("gl",    "Galego"),
-    ("ka",    "Georgiano"),
-    ("el",    "Grego"),
-    ("gu",    "Gujarati"),
-    ("he",    "Hebraico"),
-    ("hi",    "Hindi"),
-    ("nl",    "Holandês"),
-    ("hu",    "Húngaro"),
-    ("id",    "Indonésio"),
-    ("en",    "Inglês"),
-    ("it",    "Italiano"),
-    ("ja",    "Japonês"),
-    ("kn",    "Kannada"),
-    ("kk",    "Cazaque"),
-    ("km",    "Khmer"),
-    ("lo",    "Laosiano"),
-    ("la",    "Latim"),
-    ("lv",    "Letão"),
-    ("lt",    "Lituano"),
-    ("mk",    "Macedônio"),
-    ("ms",    "Malaio"),
-    ("ml",    "Malaiala"),
-    ("mi",    "Maori"),
-    ("mr",    "Marathi"),
-    ("mn",    "Mongol"),
-    ("ne",    "Nepalês"),
-    ("no",    "Norueguês"),
-    ("fa",    "Persa"),
-    ("pl",    "Polonês"),
-    ("pt",    "Português"),
-    ("pa",    "Punjabi"),
-    ("ro",    "Romeno"),
-    ("ru",    "Russo"),
-    ("sr",    "Sérvio"),
-    ("si",    "Cingalês"),
-    ("so",    "Somali"),
-    ("sv",    "Sueco"),
-    ("sw",    "Suaíli"),
-    ("tg",    "Tadjique"),
-    ("ta",    "Tâmil"),
-    ("te",    "Telugu"),
-    ("th",    "Tailandês"),
-    ("tr",    "Turco"),
-    ("uk",    "Ucraniano"),
-    ("ur",    "Urdu"),
-    ("uz",    "Usbeque"),
-    ("vi",    "Vietnamita"),
-    ("cy",    "Galês"),
-    ("yi",    "Iídiche"),
-    ("zu",    "Zulu"),
-]
-
-_LANG_DISPLAY    = [f"{nome} ({cod})" for cod, nome in _LANGS]
-_CODE_BY_DISPLAY = {f"{nome} ({cod})": cod for cod, nome in _LANGS}
-_DISPLAY_BY_CODE = {cod: f"{nome} ({cod})" for cod, nome in _LANGS}
+LANG_SRC = [("Inglês", "en"), ("Espanhol", "es"), ("Francês", "fr"),
+            ("Alemão", "de"), ("Italiano", "it"), ("Português", "pt"),
+            ("Auto-detectar", "auto")]
+LANG_DST = [("Português (pt-BR)", "pt"), ("Português (pt-PT)", "pt-PT"),
+            ("Espanhol", "es"), ("Inglês", "en"), ("Francês", "fr"),
+            ("Alemão", "de"), ("Italiano", "it")]
+FMT_MAP  = {"Word": "docx", "TXT": "txt", "Markdown": "md", "PDF": "pdf"}
+MODO_MAP = {"Novo arquivo": "novo", "Continuar": "append", "Substituir": "replace"}
 
 
-def _lang_code(display: str) -> str:
-    """Extrai o código de 'Nome (cod)' ou devolve o valor como está (código direto)."""
-    return _CODE_BY_DISPLAY.get(display, display)
+class DropZone(QWidget):
+    file_dropped = pyqtSignal(str)
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self._current_file = ""
+        self._layout = QVBoxLayout(self)
+        self._layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._build_empty()
 
-# ── Constantes de layout ──────────────────────────────────────────────────────
-_SIDEBAR_W   = 300
+    def _clear(self):
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
-_FMT_ITEMS   = [("docx", "Word"), ("txt", "TXT"), ("md", "Markdown"), ("pdf", "PDF")]
-_FMT_BY_LBL  = {lbl: val for val, lbl in _FMT_ITEMS}
-_LBL_BY_FMT  = {val: lbl for val, lbl in _FMT_ITEMS}
-_FMT_LABELS  = [lbl for _, lbl in _FMT_ITEMS]
-
-_MODO_ITEMS  = [("novo", "Novo"), ("append", "Continuar"), ("replace", "Substituir")]
-_MODO_BY_LBL = {lbl: val for val, lbl in _MODO_ITEMS}
-_LBL_BY_MODO = {val: lbl for val, lbl in _MODO_ITEMS}
-_MODO_LABELS = [lbl for _, lbl in _MODO_ITEMS]
-
-
-class _LangPicker(ctk.CTkFrame):
-    """Entry editável + botão que abre popup scrollable com ~10 idiomas visíveis."""
-
-    _ITEM_H  = 28   # altura de cada item
-    _ITEMS_V = 10   # máximo de itens visíveis sem rolar
-
-    def __init__(self, master, variable: tk.StringVar, width: int = 200, **kw):
-        super().__init__(master, fg_color="transparent", **kw)
-        self._var = variable
-        self._popup: ctk.CTkToplevel | None = None
-        self._entry = ctk.CTkEntry(self, textvariable=self._var, width=width - 34)
-        self._entry.pack(side="left")
-        ctk.CTkButton(self, text="▾", width=30, height=28,
-                      command=self._toggle).pack(side="left", padx=(2, 0))
-
-    def _toggle(self) -> None:
-        if self._popup and self._popup.winfo_exists():
-            self._popup.destroy()
-            self._popup = None
-            return
-        self._open_popup()
-
-    def _open_popup(self) -> None:
-        popup = ctk.CTkToplevel(self)
-        popup.wm_overrideredirect(True)
-        popup.attributes("-topmost", True)
-
-        popup_w = self._entry.winfo_width() + 34
-        popup_h = self._ITEM_H * self._ITEMS_V + 6
-        scroll = ctk.CTkScrollableFrame(popup, width=popup_w - 20,
-                                        height=popup_h)
-        scroll.pack(fill="both", expand=True, padx=0, pady=0)
-
-        for display in _LANG_DISPLAY:
-            ctk.CTkButton(
-                scroll, text=display, anchor="w", height=self._ITEM_H,
-                fg_color="transparent", hover_color=("gray80", "gray30"),
-                command=lambda d=display: self._select(d, popup),
-            ).pack(fill="x", pady=1, padx=2)
-
-        self.update_idletasks()
-        x = self._entry.winfo_rootx()
-        y = self._entry.winfo_rooty() + self._entry.winfo_height() + 2
-        popup.geometry(f"+{x}+{y}")
-        popup.focus_set()
-        popup.bind("<FocusOut>",
-                   lambda e: popup.destroy() if popup.winfo_exists() else None)
-        self._popup = popup
-
-    def _select(self, display: str, popup: ctk.CTkToplevel) -> None:
-        self._var.set(display)
-        popup.destroy()
-        self._popup = None
-
-
-_BASE_CLASS = TkinterDnD.Tk if _DND_AVAILABLE else ctk.CTk
-
-
-class SibylaApp(_BASE_CLASS):
-    def __init__(self):
-        if _DND_AVAILABLE:
-            super().__init__()
-            ctk.set_appearance_mode("dark")
-            ctk.set_default_color_theme("blue")
-        else:
-            super().__init__()
-        self.title("SibylaTranslate")
-        self.geometry("1120x720")
-        self.minsize(900, 580)
-        self.resizable(True, True)
-
-        self._config = AppConfig.load()
-        self._log_queue: queue.Queue = queue.Queue()
-        self._log_redirector = LogRedirector(self._log_queue)
-        self._cancel_event = threading.Event()
-        self._worker: threading.Thread | None = None
-        self._start_time: float = 0.0
-
-        self._tema_var = tk.StringVar(value=self._config.get("tema", "dark"))
-        self._fmt_var  = tk.StringVar(value=_LBL_BY_FMT.get(self._config.get("fmt",  "docx"), "Word"))
-        self._modo_var = tk.StringVar(value=_LBL_BY_MODO.get(self._config.get("modo", "novo"), "Novo"))
-
-        self._build_ui()
-        self._after_flush = self.after(100, self._flush_log)
-
-    def _build_ui(self) -> None:
-        self.columnconfigure(0, weight=0)
-        self.columnconfigure(1, weight=1)
-        self.rowconfigure(0, weight=1)
-        self.rowconfigure(1, weight=0)
-        self._build_sidebar()
-        self._build_main_area()
-        self._build_statusbar()
-        self._build_welcome()
-        ctk.set_appearance_mode(self._tema_var.get())
-        self._toggle_main_view()
-        self._register_shortcuts()
-        if _DND_AVAILABLE:
-            self.drop_target_register(DND_FILES)
-            self.dnd_bind("<<Drop>>", self._on_drop)
-
-    def _build_statusbar(self) -> None:
-        bar = ctk.CTkFrame(self, height=30, corner_radius=0,
-                           fg_color=("gray88", "gray12"))
-        bar.grid(row=1, column=0, columnspan=2, sticky="ew")
-        bar.columnconfigure(1, weight=1)
-
-        self._sb_progress = ctk.CTkProgressBar(bar, height=3, corner_radius=0, width=140)
-        self._sb_progress.set(0)
-        self._sb_progress.grid(row=0, column=0, padx=(12, 8), pady=(0, 0), sticky="w")
-
-        self._sb_lbl_paginas  = ctk.CTkLabel(bar, text="Pronto",
-                                              font=ctk.CTkFont(size=10), text_color="gray50")
-        self._sb_lbl_paginas.grid(row=0, column=1, sticky="w", padx=4)
-
-        self._sb_lbl_vel = ctk.CTkLabel(bar, text="",
-                                         font=ctk.CTkFont(size=10), text_color="gray50")
-        self._sb_lbl_vel.grid(row=0, column=2, sticky="e", padx=(4, 4))
-
-        self._sb_lbl_rest = ctk.CTkLabel(bar, text="",
-                                          font=ctk.CTkFont(size=10), text_color="gray50")
-        self._sb_lbl_rest.grid(row=0, column=3, sticky="e", padx=(0, 12))
-
-    def _build_welcome(self) -> None:
-        self._welcome = ctk.CTkFrame(self, fg_color="transparent")
-        self._welcome.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=(12, 12))
-        self._welcome.columnconfigure(0, weight=1)
-        self._welcome.rowconfigure(0, weight=1)
-
-        inner = ctk.CTkFrame(self._welcome, fg_color="transparent")
-        inner.grid(row=0, column=0)
-
-        ctk.CTkLabel(inner, text="📄", font=ctk.CTkFont(size=72)).pack(pady=(0, 16))
-        ctk.CTkLabel(inner, text="SibylaTranslate",
-                     font=ctk.CTkFont(size=22, weight="bold")).pack()
-        ctk.CTkLabel(inner, text="Arraste um PDF aqui ou clique em  ···  para começar",
-                     font=ctk.CTkFont(size=13), text_color="gray50").pack(pady=(8, 24))
-
-        hints = ctk.CTkFrame(inner, fg_color=("gray90", "gray18"), corner_radius=10)
-        hints.pack(pady=(0, 8))
-        for icon, txt in [
-            ("Ctrl+O",  "Abrir PDF"),
-            ("Ctrl+↵",  "Traduzir"),
-            ("Esc",     "Cancelar"),
+    def _build_empty(self):
+        self._clear()
+        self.setStyleSheet(f"DropZone {{ border: 2px dashed {BORDER_BLUE}; border-radius: 8px; background: {BG_DROPZONE}; }}")
+        for text, size, color in [
+            ("🗎", 52, "#BBBBBB"),
+            ("Arraste um PDF aqui", 13, "#555555"),
+            ("ou clique para abrir", 11, PRIMARY),
         ]:
-            row = ctk.CTkFrame(hints, fg_color="transparent")
-            row.pack(fill="x", padx=24, pady=4)
-            ctk.CTkLabel(row, text=icon, width=68,
-                         font=ctk.CTkFont(family="Courier", size=11),
-                         fg_color=("gray80", "gray25"), corner_radius=5,
-                         text_color=("gray20", "gray80")).pack(side="left")
-            ctk.CTkLabel(row, text=txt,
-                         font=ctk.CTkFont(size=11), text_color="gray50").pack(
-                side="left", padx=10)
-
-        if _DND_AVAILABLE:
-            self._welcome.drop_target_register(DND_FILES)
-            self._welcome.dnd_bind("<<Drop>>", self._on_drop)
-
-    def _toggle_main_view(self) -> None:
-        has_pdf = bool(self._pdf_var.get() if hasattr(self, "_pdf_var") else False)
-        if has_pdf:
-            self._welcome.grid_remove()
-            self._tabview.grid()
-        else:
-            self._tabview.grid_remove()
-            self._welcome.grid()
-
-    def _register_shortcuts(self) -> None:
-        self.bind("<Control-o>", lambda _e: self._selecionar_pdf())
-        self.bind("<Control-O>", lambda _e: self._selecionar_pdf())
-        self.bind("<Control-Return>", lambda _e: self._iniciar() if self._btn_traduzir.cget("state") == "normal" else None)
-        self.bind("<Control-s>", lambda _e: self._selecionar_saida())
-        self.bind("<Control-S>", lambda _e: self._selecionar_saida())
-        self.bind("<Escape>", lambda _e: self._cancelar() if self._btn_cancelar.cget("state") == "normal" else None)
-
-    def _on_drop(self, event) -> None:
-        path = event.data.strip().strip("{}")
-        if path.lower().endswith(".pdf") and os.path.isfile(path):
-            self._pdf_var.set(path)
-            self._config.set("ultimo_pdf", path)
-            self._pdf_name_lbl.configure(text=self._pdf_short_name())
-            self._atualizar_total_paginas()
-
-    # ── Sidebar ───────────────────────────────────────────────────────────────
-    def _build_sidebar(self) -> None:
-        sb = ctk.CTkFrame(self, width=_SIDEBAR_W, corner_radius=0)
-        sb.grid(row=0, column=0, sticky="nsew")
-        sb.grid_propagate(False)
-        sb.columnconfigure(0, weight=1)
-        sb.rowconfigure(1, weight=1)
-
-        # ── App name + tema toggle (topo) ─────────────────────────────────────
-        app_hdr = ctk.CTkFrame(sb, fg_color="transparent")
-        app_hdr.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 0))
-        ctk.CTkLabel(app_hdr, text="SibylaTranslate",
-                     font=ctk.CTkFont(size=15, weight="bold")).pack(side="left")
-        self._tema_btn = ctk.CTkButton(
-            app_hdr, text=self._tema_var.get(), width=56, height=24,
-            font=ctk.CTkFont(size=10), fg_color="gray20", hover_color="gray30",
-            corner_radius=6, command=self._toggle_tema)
-        self._tema_btn.pack(side="right")
-
-        # ── Scrollable fields ─────────────────────────────────────────────────
-        scroll = ctk.CTkScrollableFrame(sb, fg_color="transparent", scrollbar_button_color="gray25")
-        scroll.grid(row=1, column=0, sticky="nsew")
-        scroll.columnconfigure(0, weight=1)
-        self._build_fields(scroll)
-
-        # ── Progress bar ──────────────────────────────────────────────────────
-        self._progress = ctk.CTkProgressBar(sb, height=4, corner_radius=2)
-        self._progress.set(0)
-        self._progress.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 2))
-
-        # ── Status + limpar ───────────────────────────────────────────────────
-        stat_row = ctk.CTkFrame(sb, fg_color="transparent")
-        stat_row.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 6))
-        self._lbl_status = ctk.CTkLabel(
-            stat_row, text="Pronto para traduzir",
-            text_color="gray50", font=ctk.CTkFont(size=11), anchor="w")
-        self._lbl_status.pack(side="left", fill="x", expand=True)
-        ctk.CTkButton(stat_row, text="limpar", width=46, height=20,
-                      fg_color="transparent", text_color="gray50",
-                      hover_color=("gray80", "gray30"), font=ctk.CTkFont(size=11),
-                      command=self._limpar_log).pack(side="right")
-
-        # ── Traduzir / Cancelar ───────────────────────────────────────────────
-        btn_row = ctk.CTkFrame(sb, fg_color="transparent")
-        btn_row.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 16))
-        btn_row.columnconfigure(0, weight=1)
-        btn_row.columnconfigure(1, weight=1)
-
-        self._btn_traduzir = ctk.CTkButton(
-            btn_row, text="▶  Traduzir", height=42,
-            font=ctk.CTkFont(size=13, weight="bold"), command=self._iniciar)
-        self._btn_traduzir.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-
-        self._btn_cancelar = ctk.CTkButton(
-            btn_row, text="✕  Cancelar", height=42,
-            fg_color="#7a1010", hover_color="#5e0c0c",
-            command=self._cancelar, state="disabled")
-        self._btn_cancelar.grid(row=0, column=1, sticky="ew", padx=(4, 0))
-
-    def _section_header(self, parent, text: str, icon: str = "") -> None:
-        """Seção: ícone + rótulo + linha."""
-        f = ctk.CTkFrame(parent, fg_color="transparent")
-        f.pack(fill="x", padx=14, pady=(14, 5))
-        lbl_text = f"{icon} {text}" if icon else text
-        ctk.CTkLabel(f, text=lbl_text,
-                     font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color="gray55").pack(side="left")
-        ctk.CTkFrame(f, height=1, fg_color="gray22").pack(
-            side="left", fill="x", expand=True, padx=(8, 0))
-
-    def _build_fields(self, parent) -> None:
-
-        # ══ ARQUIVO ══════════════════════════════════════════════════════════
-        self._section_header(parent, "ARQUIVO", "📁")
-
-        # Card com miniatura + nome + info + toggle open/close
-        self._pdf_card = ctk.CTkFrame(parent, corner_radius=8)
-        pdf_card = self._pdf_card
-        pdf_card.pack(fill="x", padx=14, pady=(0, 6))
-        pdf_card.columnconfigure(1, weight=1)
-
-        self._pdf_var = tk.StringVar(value="")
-
-        # Ícone PDF (miniatura simples)
-        ctk.CTkLabel(pdf_card, text="📄", font=ctk.CTkFont(size=28),
-                     width=44).grid(row=0, column=0, rowspan=2,
-                                    padx=(10, 4), pady=(10, 10))
-
-        # Nome truncado + info
-        self._pdf_name_lbl = ctk.CTkLabel(
-            pdf_card, text=self._pdf_short_name(),
-            font=ctk.CTkFont(size=12, weight="bold"), anchor="w")
-        self._pdf_name_lbl.grid(row=0, column=1, sticky="ew",
-                                padx=(0, 4), pady=(10, 0))
-
-        self._total_var = tk.StringVar(value="")
-        ctk.CTkLabel(pdf_card, textvariable=self._total_var,
-                     text_color="gray50", font=ctk.CTkFont(size=10),
-                     anchor="w").grid(row=1, column=1, sticky="ew",
-                                      padx=(0, 4), pady=(0, 10))
-
-        # Botão … para abrir
-        ctk.CTkButton(pdf_card, text="…", width=30, height=26,
-                      command=self._selecionar_pdf).grid(
-            row=0, column=2, rowspan=2, padx=(0, 10))
-
-        # Entry oculto (usado internamente, não exibido)
-        self._pdf_entry_hidden = ctk.CTkEntry(parent, textvariable=self._pdf_var,
-                                              height=0, width=0, fg_color="transparent",
-                                              border_width=0)
-        # não é packed — apenas mantém o StringVar
-
-        # Intervalo de páginas
-        ctk.CTkLabel(parent, text="Intervalo de páginas",
-                     font=ctk.CTkFont(size=10), text_color="gray55",
-                     anchor="w").pack(fill="x", padx=14, pady=(2, 4))
-
-        pag_row = ctk.CTkFrame(parent, fg_color="transparent")
-        pag_row.pack(fill="x", padx=14, pady=(0, 4))
-
-        self._pag_ini_var = tk.StringVar(value="1")
-        self._pag_fim_var = tk.StringVar(value="5")
-        ctk.CTkEntry(pag_row, textvariable=self._pag_ini_var,
-                     width=60, justify="center",
-                     font=ctk.CTkFont(size=12)).pack(side="left")
-        ctk.CTkLabel(pag_row, text="até",
-                     text_color="gray50", font=ctk.CTkFont(size=11)).pack(
-            side="left", padx=8)
-        ctk.CTkEntry(pag_row, textvariable=self._pag_fim_var,
-                     width=60, justify="center",
-                     font=ctk.CTkFont(size=12)).pack(side="left")
-        ctk.CTkButton(pag_row, text="Todas", width=72, height=30,
-                      fg_color=("gray85", "gray25"), text_color=("gray10", "gray90"),
-                      hover_color=("gray75", "gray35"),
-                      font=ctk.CTkFont(size=11),
-                      command=self._todas_paginas).pack(side="left", padx=(10, 0))
-
-        # ══ IDIOMA ═══════════════════════════════════════════════════════════
-        self._section_header(parent, "IDIOMA", "🌐")
-
-        lang_row = ctk.CTkFrame(parent, fg_color="transparent")
-        lang_row.pack(fill="x", padx=14, pady=(0, 2))
-        lang_row.columnconfigure(0, weight=1)
-        lang_row.columnconfigure(2, weight=1)
-
-        saved_src = self._config.get("lang_src", "en")
-        saved_dst = self._config.get("lang_dst", "pt")
-        self._lang_src_var = tk.StringVar(
-            value=_DISPLAY_BY_CODE.get(saved_src, saved_src))
-        self._lang_dst_var = tk.StringVar(
-            value=_DISPLAY_BY_CODE.get(saved_dst, saved_dst))
-
-        _LangPicker(lang_row, variable=self._lang_src_var, width=110).grid(
-            row=0, column=0, sticky="ew")
-        ctk.CTkButton(lang_row, text="⇌", width=32, height=28,
-                      fg_color="transparent", hover_color=("gray75", "gray30"),
-                      font=ctk.CTkFont(size=14),
-                      command=self._swap_languages).grid(row=0, column=1, padx=4)
-        _LangPicker(lang_row, variable=self._lang_dst_var, width=110).grid(
-            row=0, column=2, sticky="ew")
-
-        # Label "Idioma detectado" (placeholder; pode ser atualizado após análise)
-        self._lang_detect_lbl = ctk.CTkLabel(
-            parent, text="", font=ctk.CTkFont(size=10),
-            text_color=("#2db862", "#3dcf76"), anchor="w")
-        self._lang_detect_lbl.pack(fill="x", padx=14, pady=(3, 2))
-
-        # ══ SAÍDA ════════════════════════════════════════════════════════════
-        self._section_header(parent, "SAÍDA", "📤")
-
-        # Modo
-        ctk.CTkLabel(parent, text="Modo", font=ctk.CTkFont(size=10),
-                     text_color="gray55", anchor="w").pack(fill="x", padx=14, pady=(0, 3))
-        self._modo_seg = ctk.CTkSegmentedButton(
-            parent, values=_MODO_LABELS, variable=self._modo_var,
-            command=self._on_modo_change, font=ctk.CTkFont(size=11), height=30)
-        self._modo_seg.pack(fill="x", padx=14, pady=(0, 8))
-
-        # base frame (hidden until append/replace)
-        self._base_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        self._base_var = tk.StringVar(value=self._config.get("ultimo_docx", ""))
-        bf_inner = ctk.CTkFrame(self._base_frame, corner_radius=8)
-        bf_inner.pack(fill="x")
-        bf_inner.columnconfigure(1, weight=1)
-        ctk.CTkLabel(bf_inner, text="📄", width=28,
-                     font=ctk.CTkFont(size=13)).grid(row=0, column=0, padx=(8, 2), pady=6)
-        ctk.CTkEntry(bf_inner, textvariable=self._base_var,
-                     placeholder_text="Selecione o .docx base…").grid(
-            row=0, column=1, sticky="ew", padx=(0, 4), pady=6)
-        ctk.CTkButton(bf_inner, text="…", width=28, height=24,
-                      command=self._selecionar_base).grid(
-            row=0, column=2, padx=(0, 8), pady=6)
-        self._base_visible = False
-
-        # Formato
-        ctk.CTkLabel(parent, text="Formato", font=ctk.CTkFont(size=10),
-                     text_color="gray55", anchor="w").pack(fill="x", padx=14, pady=(0, 3))
-        ctk.CTkSegmentedButton(
-            parent, values=_FMT_LABELS, variable=self._fmt_var,
-            command=self._on_fmt_change, font=ctk.CTkFont(size=11), height=30,
-        ).pack(fill="x", padx=14, pady=(0, 8))
-
-        # Arquivo de saída
-        ctk.CTkLabel(parent, text="Arquivo de saída", font=ctk.CTkFont(size=10),
-                     text_color="gray55", anchor="w").pack(fill="x", padx=14, pady=(0, 3))
-        out_card = ctk.CTkFrame(parent, corner_radius=8)
-        out_card.pack(fill="x", padx=14, pady=(0, 6))
-        out_card.columnconfigure(0, weight=1)
-
-        self._saida_var = tk.StringVar(value=self._config.get("ultima_saida", ""))
-        self._saida_name_lbl = ctk.CTkLabel(
-            out_card, text=self._saida_short_name(),
-            font=ctk.CTkFont(size=11), anchor="w", text_color="gray80")
-        self._saida_name_lbl.grid(row=0, column=0, sticky="ew",
-                                   padx=(10, 4), pady=8)
-        ctk.CTkButton(out_card, text="…", width=28, height=24,
-                      command=self._selecionar_saida).grid(
-            row=0, column=1, padx=(0, 10), pady=8)
-        self._saida_var.trace_add("write", lambda *_: self._saida_name_lbl.configure(
-            text=self._saida_short_name()))
-
-        # ══ GLOSSÁRIO ════════════════════════════════════════════════════════
-        self._section_header(parent, "GLOSSÁRIO", "✏️")
-
-        gloss_row = ctk.CTkFrame(parent, fg_color="transparent")
-        gloss_row.pack(fill="x", padx=14, pady=(0, 6))
-        gloss_row.columnconfigure(0, weight=1)
-
-        self._gloss_entry_var = tk.StringVar()
-        ctk.CTkEntry(gloss_row, textvariable=self._gloss_entry_var,
-                     placeholder_text="ex: Sibyla1",
-                     height=30).grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ctk.CTkButton(gloss_row, text="+ Add", width=64, height=30,
-                      command=self._gloss_add).grid(row=0, column=1)
-
-        # chips container
-        self._gloss_chips_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        self._gloss_chips_frame.pack(fill="x", padx=14, pady=(0, 8))
-
-        self._gloss_terms: list[str] = self._config.get("glossario", [])
-        self._gloss_chip_widgets: dict[str, ctk.CTkFrame] = {}
-        for term in self._gloss_terms:
-            self._gloss_render_chip(term)
-
-
-    # ── Main area (tabbed) ────────────────────────────────────────────────────
-    def _build_main_area(self) -> None:
-        self._tabview = ctk.CTkTabview(self, anchor="nw",
-                                       command=self._on_tab_change)
-        self._tabview.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=(12, 12))
-
-        for tab_name in ("Comparar", "Original", "Traduzido", "Log", "Histórico", "✂ Recortar"):
-            self._tabview.add(tab_name)
-
-        # ── Comparar ──────────────────────────────────────────────────────────
-        self._build_compare_tab(self._tabview.tab("Comparar"))
-
-        # ── Original (preview PDF) ────────────────────────────────────────────
-        tab_orig = self._tabview.tab("Original")
-        tab_orig.columnconfigure(0, weight=1)
-        tab_orig.rowconfigure(0, weight=1)
-        self._preview = PreviewPanel(tab_orig)
-        self._preview.grid(row=0, column=0, sticky="nsew")
-
-        # ── Traduzido (placeholder) ───────────────────────────────────────────
-        tab_trad = self._tabview.tab("Traduzido")
-        tab_trad.columnconfigure(0, weight=1)
-        tab_trad.rowconfigure(0, weight=1)
-        self._trad_box = ctk.CTkTextbox(
-            tab_trad, font=ctk.CTkFont(family="Georgia", size=12),
-            wrap="word", state="disabled")
-        self._trad_box.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-
-        # ── Log ───────────────────────────────────────────────────────────────
-        tab_log = self._tabview.tab("Log")
-        tab_log.columnconfigure(0, weight=1)
-        tab_log.rowconfigure(1, weight=1)
-
-        log_hdr = ctk.CTkFrame(tab_log, fg_color="transparent")
-        log_hdr.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
-        ctk.CTkLabel(log_hdr, text="Log de execução",
-                     font=ctk.CTkFont(size=12), text_color="gray60").pack(side="left")
-        ctk.CTkButton(log_hdr, text="Limpar", width=70, height=24,
-                      command=self._limpar_log).pack(side="right")
-
-        self._log_box = ctk.CTkTextbox(
-            tab_log, font=ctk.CTkFont(family="Courier", size=11),
-            wrap="word", state="disabled")
-        self._log_box.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
-
-        # ── Histórico ────────────────────────────────────────────────────────
-        tab_hist = self._tabview.tab("Histórico")
-        tab_hist.columnconfigure(0, weight=1)
-        tab_hist.rowconfigure(1, weight=1)
-
-        hist_hdr = ctk.CTkFrame(tab_hist, fg_color="transparent")
-        hist_hdr.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
-        ctk.CTkLabel(hist_hdr, text="Últimas traduções",
-                     font=ctk.CTkFont(size=12), text_color="gray60").pack(side="left")
-        ctk.CTkButton(hist_hdr, text="Limpar", width=70, height=24,
-                      command=self._historico_limpar).pack(side="right")
-
-        self._hist_scroll = ctk.CTkScrollableFrame(tab_hist, fg_color="transparent")
-        self._hist_scroll.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
-        self._hist_scroll.columnconfigure(0, weight=1)
-        self._historico_render()
-
-        # ── Recortar ─────────────────────────────────────────────────────────
-        self._build_cutter_tab(self._tabview.tab("✂ Recortar"))
-
-    # ── Comparar tab ──────────────────────────────────────────────────────────
-    def _build_compare_tab(self, tab) -> None:
-        tab.columnconfigure(0, weight=1)
-        tab.columnconfigure(1, weight=1)
-        tab.rowconfigure(1, weight=1)
-
-        # ── Headers ────────────────────────────────────────────────────────
-        orig_hdr = ctk.CTkFrame(tab, fg_color="transparent")
-        orig_hdr.grid(row=0, column=0, sticky="ew", padx=(8, 4), pady=(6, 2))
-        self._cmp_orig_lbl = ctk.CTkLabel(
-            orig_hdr, text="ORIGINAL · EN",
-            font=ctk.CTkFont(size=10, weight="bold"), text_color="gray55")
-        self._cmp_orig_lbl.pack(side="left")
-
-        trad_hdr = ctk.CTkFrame(tab, fg_color="transparent")
-        trad_hdr.grid(row=0, column=1, sticky="ew", padx=(4, 8), pady=(6, 2))
-        self._cmp_trad_lbl = ctk.CTkLabel(
-            trad_hdr, text="TRADUZIDO · PT",
-            font=ctk.CTkFont(size=10, weight="bold"),
-            text_color=("#1a8cff", "#5EB3FF"))
-        self._cmp_trad_lbl.pack(side="left")
-
-        # ── PDF canvases ────────────────────────────────────────────────────
-        bg = "#1e1e1e"
-        self._cmp_orig_canvas = tk.Canvas(tab, bg=bg, highlightthickness=0)
-        self._cmp_orig_canvas.grid(row=1, column=0, sticky="nsew",
-                                   padx=(8, 4), pady=(0, 0))
-        self._cmp_orig_canvas.bind("<Configure>", lambda _e: self._cmp_render())
-        self._cmp_orig_canvas.bind("<MouseWheel>",
-                                   lambda e: self._cmp_scroll(e))
-        self._cmp_orig_canvas.bind("<Button-4>",
-                                   lambda e: self._cmp_nav(-1))
-        self._cmp_orig_canvas.bind("<Button-5>",
-                                   lambda e: self._cmp_nav(1))
-
-        self._cmp_trad_canvas = tk.Canvas(tab, bg=bg, highlightthickness=0)
-        self._cmp_trad_canvas.grid(row=1, column=1, sticky="nsew",
-                                   padx=(4, 8), pady=(0, 0))
-        self._cmp_trad_canvas.bind("<Configure>", lambda _e: self._cmp_render())
-        self._cmp_trad_canvas.bind("<MouseWheel>",
-                                   lambda e: self._cmp_scroll(e))
-        self._cmp_trad_canvas.bind("<Button-4>",
-                                   lambda e: self._cmp_nav(-1))
-        self._cmp_trad_canvas.bind("<Button-5>",
-                                   lambda e: self._cmp_nav(1))
-
-        # ── Shared navigation + status bar ─────────────────────────────────
-        bottom = ctk.CTkFrame(tab, height=36, corner_radius=0,
-                              fg_color=("gray90", "gray15"))
-        bottom.grid(row=2, column=0, columnspan=2, sticky="ew")
-        bottom.columnconfigure(0, weight=1)
-        bottom.columnconfigure(2, weight=1)
-
-        ctk.CTkButton(bottom, text="◀", width=32, height=26,
-                      command=lambda: self._cmp_nav(-1)).grid(
-            row=0, column=0, sticky="e", padx=(12, 4), pady=5)
-        self._cmp_pag_lbl = ctk.CTkLabel(
-            bottom, text="— / —", font=ctk.CTkFont(size=11), width=70)
-        self._cmp_pag_lbl.grid(row=0, column=1)
-        ctk.CTkButton(bottom, text="▶", width=32, height=26,
-                      command=lambda: self._cmp_nav(1)).grid(
-            row=0, column=2, sticky="w", padx=(4, 12), pady=5)
-
-        self._cmp_status_lbl = ctk.CTkLabel(
-            bottom, text="Pronto.",
-            font=ctk.CTkFont(size=10), text_color="gray50")
-        self._cmp_status_lbl.grid(row=0, column=3, sticky="e", padx=16)
-
-        # ── Internal state ─────────────────────────────────────────────────
-        self._cmp_page        = 1
-        self._cmp_total       = 0
-        self._cmp_fitz_orig   = None   # fitz.Document original
-        self._cmp_fitz_trad   = None   # fitz.Document traduzido (se PDF)
-        self._cmp_pages_trad: list[str] = []  # fallback texto
-        self._cmp_photo_orig  = None   # evita GC
-        self._cmp_photo_trad  = None
-        self._cmp_orig_img_id = None
-        self._cmp_trad_img_id = None
-
-    def _cmp_nav(self, delta: int) -> None:
-        if not self._cmp_total:
-            return
-        self._cmp_page = max(1, min(self._cmp_total, self._cmp_page + delta))
-        self._cmp_render()
-
-    def _cmp_scroll(self, event) -> None:
-        delta = -1 if event.delta > 0 else 1
-        self._cmp_nav(delta)
-
-    def _cmp_render(self) -> None:
-        t = self._cmp_total
-        p = self._cmp_page
-        self._cmp_pag_lbl.configure(text=f"{p} / {t}" if t else "— / —")
-
-        self._cmp_render_side(
-            self._cmp_orig_canvas,
-            self._cmp_fitz_orig, p,
-            "_cmp_photo_orig", "_cmp_orig_img_id",
-            fallback=None)
-
-        trad_text = (self._cmp_pages_trad[p - 1]
-                     if self._cmp_pages_trad and p <= len(self._cmp_pages_trad)
-                     else None)
-        self._cmp_render_side(
-            self._cmp_trad_canvas,
-            self._cmp_fitz_trad, p,
-            "_cmp_photo_trad", "_cmp_trad_img_id",
-            fallback=trad_text)
-
-    def _cmp_render_side(self, canvas: tk.Canvas, doc, page_num: int,
-                         photo_attr: str, img_id_attr: str,
-                         fallback: str | None) -> None:
-        cw = canvas.winfo_width()
-        ch = canvas.winfo_height()
-        if cw < 10 or ch < 10:
-            return
-        canvas.delete("all")
-        setattr(self, img_id_attr, None)
-
-        if doc and self._cmp_total and page_num <= len(doc):
-            # Render PDF page
-            page = doc[page_num - 1]
-            pr = page.rect
-            scale = min(cw / pr.width, ch / pr.height) * 0.97
-            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            photo = ImageTk.PhotoImage(img)
-            setattr(self, photo_attr, photo)
-            img_id = canvas.create_image(cw // 2, ch // 2, anchor="center",
-                                         image=photo)
-            setattr(self, img_id_attr, img_id)
-        elif fallback is not None:
-            # Render text fallback
-            pad = 20
-            canvas.create_text(pad, pad, anchor="nw", text=fallback,
-                                fill="#cccccc", font=("Georgia", 12),
-                                width=max(10, cw - pad * 2))
-        else:
-            # Empty placeholder
-            canvas.create_text(cw // 2, ch // 2, anchor="center",
-                                text="Sem conteúdo", fill="#555555",
-                                font=("Helvetica", 11))
-
-    # ── Recortar PDF tab ──────────────────────────────────────────────────────
-    def _build_cutter_tab(self, tab) -> None:
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(0, weight=1)
-
-        # Scrollable inner area so it works at any height
-        inner = ctk.CTkScrollableFrame(tab, fg_color="transparent")
-        inner.grid(row=0, column=0, sticky="nsew")
-        inner.columnconfigure(0, weight=1)
-
-        # Header
-        hdr_row = ctk.CTkFrame(inner, fg_color="transparent")
-        hdr_row.pack(fill="x", padx=16, pady=(18, 4))
-        ctk.CTkLabel(hdr_row, text="Recortar PDF",
-                     font=ctk.CTkFont(size=15, weight="bold")).pack(side="left")
-        ctk.CTkLabel(hdr_row, text="— extraia páginas para um novo arquivo",
-                     font=ctk.CTkFont(size=11), text_color="gray50").pack(
-            side="left", padx=8)
-
-        # ── ARQUIVO PDF ───────────────────────────────────────────────────────
-        self._section_header(inner, "ARQUIVO PDF")
-        c_pdf_card = ctk.CTkFrame(inner)
-        c_pdf_card.pack(fill="x", padx=16, pady=(0, 4))
-        c_pdf_card.columnconfigure(1, weight=1)
-
-        self._cut_pdf_var   = tk.StringVar()
-        self._cut_total_var = tk.StringVar(value="")
-        ctk.CTkLabel(c_pdf_card, text="📄", font=ctk.CTkFont(size=18),
-                     width=36).grid(row=0, column=0, rowspan=2, padx=(10, 2), pady=8)
-        ctk.CTkEntry(c_pdf_card, textvariable=self._cut_pdf_var,
-                     placeholder_text="Selecione o PDF…").grid(
-            row=0, column=1, sticky="ew", padx=(0, 4), pady=(8, 2))
-        ctk.CTkButton(c_pdf_card, text="…", width=32, height=28,
-                      command=self._cut_sel_pdf).grid(
-            row=0, column=2, padx=(0, 10), pady=(8, 2))
-        ctk.CTkLabel(c_pdf_card, textvariable=self._cut_total_var,
-                     text_color="gray50", font=ctk.CTkFont(size=10),
-                     anchor="w").grid(row=1, column=1, sticky="w", pady=(0, 8))
-
-        # ── PÁGINAS A EXTRAIR ─────────────────────────────────────────────────
-        self._section_header(inner, "PÁGINAS A EXTRAIR")
-        self._cut_pag_var = tk.StringVar()
-        ctk.CTkEntry(inner, textvariable=self._cut_pag_var,
-                     placeholder_text='Ex.: "1-3, 5, 7-9"  ou  "2"').pack(
-            fill="x", padx=16, pady=(0, 4))
-        hint_row = ctk.CTkFrame(inner, fg_color="transparent")
-        hint_row.pack(fill="x", padx=16, pady=(0, 4))
-        for hint in ["1-5 → intervalo", "1, 3, 5 → páginas isoladas",
-                     "1-3, 6, 8-10 → misto"]:
-            ctk.CTkLabel(hint_row, text=hint, font=ctk.CTkFont(size=10),
-                         text_color="gray50").pack(side="left", padx=(0, 16))
-
-        # ── ARQUIVO DE SAÍDA ──────────────────────────────────────────────────
-        self._section_header(inner, "ARQUIVO DE SAÍDA")
-        c_out_card = ctk.CTkFrame(inner)
-        c_out_card.pack(fill="x", padx=16, pady=(0, 4))
-        c_out_card.columnconfigure(0, weight=1)
-
-        self._cut_saida_var = tk.StringVar()
-        ctk.CTkEntry(c_out_card, textvariable=self._cut_saida_var,
-                     placeholder_text="nome automático se vazio").grid(
-            row=0, column=0, sticky="ew", padx=(10, 4), pady=8)
-        ctk.CTkButton(c_out_card, text="…", width=32, height=28,
-                      command=self._cut_sel_saida).grid(
-            row=0, column=1, padx=(0, 10), pady=8)
-
-        # ── Botão + status ────────────────────────────────────────────────────
-        ctk.CTkFrame(inner, height=1, fg_color="gray25").pack(
-            fill="x", padx=16, pady=(10, 0))
-
-        act_row = ctk.CTkFrame(inner, fg_color="transparent")
-        act_row.pack(fill="x", padx=16, pady=14)
-
-        self._btn_cortar = ctk.CTkButton(
-            act_row, text="✂  Recortar", height=40, width=160,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=self._iniciar_corte)
-        self._btn_cortar.pack(side="left")
-
-        self._cut_status_lbl = ctk.CTkLabel(
-            act_row, text="", font=ctk.CTkFont(size=11),
-            text_color="gray50", anchor="w", wraplength=380)
-        self._cut_status_lbl.pack(side="left", padx=16, fill="x", expand=True)
-
-    def _cut_sel_pdf(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Selecionar PDF para recortar",
-            filetypes=[("PDF", "*.pdf"), ("Todos", "*.*")],
-            initialdir=os.path.dirname(self._cut_pdf_var.get()) or os.getcwd(),
-        )
-        if not path:
-            return
-        self._cut_pdf_var.set(path)
+            lbl = QLabel(text)
+            lbl.setFont(QFont("Segoe UI", size))
+            lbl.setStyleSheet(f"color: {color}; border: none; background: transparent;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            if text == "ou clique para abrir":
+                lbl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                lbl.mousePressEvent = lambda _e: self._open_dialog()
+            self._layout.addWidget(lbl)
+
+    def _build_loaded(self, path: str):
+        self._clear()
+        self.setStyleSheet(f"DropZone {{ border: 1px solid {BORDER}; border-radius: 8px; background: #F0F7FF; }}")
+        row = QWidget()
+        row.setStyleSheet("background: transparent; border: none;")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(16, 12, 16, 12)
+        row_layout.setSpacing(12)
+        icon = QLabel("📄")
+        icon.setFont(QFont("Segoe UI", 28))
+        icon.setStyleSheet("border: none; background: transparent;")
+        row_layout.addWidget(icon)
+        info = QVBoxLayout()
+        info.setSpacing(2)
+        name = os.path.basename(path)
+        name = (name[:38] + "…") if len(name) > 40 else name
+        name_lbl = QLabel(name)
+        name_lbl.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        name_lbl.setStyleSheet(f"color: {TEXT_MAIN}; border: none; background: transparent;")
+        info.addWidget(name_lbl)
         try:
+            import fitz
             doc = fitz.open(path)
-            n = len(doc)
+            n_pages = doc.page_count
             doc.close()
-            self._cut_total_var.set(f"{n} página{'s' if n != 1 else ''}")
         except Exception:
-            self._cut_total_var.set("(não foi possível ler o PDF)")
-        # espelha no preview principal
-        self._preview.abrir(path)
+            n_pages = "?"
+        size_str = ""
+        try:
+            size_str = f"{os.path.getsize(path) / 1024 / 1024:.1f} MB"
+        except Exception:
+            pass
+        meta = QLabel(f"{n_pages} páginas · {size_str}")
+        meta.setFont(QFont("Segoe UI", 10))
+        meta.setStyleSheet(f"color: {TEXT_SEC}; border: none; background: transparent;")
+        info.addWidget(meta)
+        row_layout.addLayout(info)
+        row_layout.addStretch()
+        x_btn = QPushButton("×")
+        x_btn.setFixedSize(24, 24)
+        x_btn.setStyleSheet(f"QPushButton {{ background: #E8E8E8; border: none; border-radius: 12px; color: {TEXT_SEC}; font-size: 14pt; }} QPushButton:hover {{ background: #FFDDDD; color: {DANGER}; }}")
+        x_btn.clicked.connect(self.reset)
+        row_layout.addWidget(x_btn)
+        self._layout.addWidget(row)
 
-    def _cut_sel_saida(self) -> None:
-        path = filedialog.asksaveasfilename(
-            title="Salvar recorte como…",
-            defaultextension=".pdf",
-            filetypes=[("PDF", "*.pdf"), ("Todos", "*.*")],
-            initialdir=os.path.dirname(self._cut_saida_var.get()) or os.getcwd(),
-        )
+    def _open_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Abrir PDF", "", "PDF (*.pdf);;Todos (*.*)")
         if path:
-            self._cut_saida_var.set(path)
+            self.load_file(path)
 
-    def _iniciar_corte(self) -> None:
-        pdf = self._cut_pdf_var.get().strip()
-        if not pdf:
-            messagebox.showerror("Erro", "Selecione um arquivo PDF.")
+    def load_file(self, path: str):
+        self._current_file = path
+        self._build_loaded(path)
+        self.file_dropped.emit(path)
+
+    def reset(self):
+        self._current_file = ""
+        self._build_empty()
+        self.file_dropped.emit("")
+
+    def get_file(self) -> str:
+        return self._current_file
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.toLocalFile().lower().endswith(".pdf"):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        for url in event.mimeData().urls():
+            p = url.toLocalFile()
+            if p.lower().endswith(".pdf") and os.path.isfile(p):
+                self.load_file(p)
+                return
+
+    def mousePressEvent(self, event):
+        if not self._current_file:
+            self._open_dialog()
+
+
+class SectionCard(QWidget):
+    def __init__(self, title: str, content: QWidget, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"SectionCard {{ background: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: 8px; }}")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+        title_lbl = QLabel(title.upper())
+        title_lbl.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        title_lbl.setStyleSheet(f"color: {TEXT_LABEL}; border: none; background: transparent;")
+        layout.addWidget(title_lbl)
+        layout.addWidget(content)
+
+
+class SegmentedButton(QWidget):
+    option_changed = pyqtSignal(str)
+
+    def __init__(self, options: list, selected: str = "", parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"SegmentedButton {{ background: #F0F0F0; border: 1px solid {BORDER}; border-radius: 8px; padding: 3px; }}")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setSpacing(2)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._btns: dict[str, QPushButton] = {}
+        first = selected or options[0]
+        for opt in options:
+            btn = QPushButton(opt)
+            btn.setCheckable(True)
+            btn.setChecked(opt == first)
+            self._apply_style(btn, opt == first)
+            btn.toggled.connect(lambda chk, o=opt, b=btn: self._on_toggle(chk, o, b))
+            self._group.addButton(btn)
+            self._btns[opt] = btn
+            layout.addWidget(btn)
+
+    def _apply_style(self, btn: QPushButton, active: bool):
+        if active:
+            btn.setStyleSheet(f"QPushButton {{ background: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: 6px; font-weight: 500; padding: 4px 12px; color: {TEXT_MAIN}; }}")
+        else:
+            btn.setStyleSheet(f"QPushButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 12px; color: {TEXT_SEC}; }} QPushButton:hover {{ background: #E8E8E8; }}")
+
+    def _on_toggle(self, checked: bool, option: str, btn: QPushButton):
+        self._apply_style(btn, checked)
+        if checked:
+            self.option_changed.emit(option)
+
+    def get_selected(self) -> str:
+        for opt, btn in self._btns.items():
+            if btn.isChecked():
+                return opt
+        return ""
+
+    def set_selected(self, option: str):
+        if option in self._btns:
+            self._btns[option].setChecked(True)
+
+
+class GlossaryWidget(QWidget):
+    def __init__(self, initial_terms: list = None, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent; border: none;")
+        self._terms: list = list(initial_terms or [])
+        main = QVBoxLayout(self)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(6)
+        entry_row = QHBoxLayout()
+        entry_row.setSpacing(4)
+        self._entry = QLineEdit()
+        self._entry.setPlaceholderText("Adicionar termo...")
+        self._entry.returnPressed.connect(self._add_tag)
+        entry_row.addWidget(self._entry)
+        add_btn = QPushButton("+")
+        add_btn.setFixedSize(32, 32)
+        add_btn.setStyleSheet(f"QPushButton {{ background: {PRIMARY}; color: white; border: none; border-radius: 4px; font-size: 16pt; }} QPushButton:hover {{ background: {PRIMARY_HOV}; }}")
+        add_btn.clicked.connect(self._add_tag)
+        entry_row.addWidget(add_btn)
+        main.addLayout(entry_row)
+        self._pills_widget = QWidget()
+        self._pills_widget.setStyleSheet("background: transparent; border: none;")
+        self._pills_layout = QVBoxLayout(self._pills_widget)
+        self._pills_layout.setContentsMargins(0, 0, 0, 0)
+        self._pills_layout.setSpacing(4)
+        main.addWidget(self._pills_widget)
+        self._render_pills()
+
+    def _add_tag(self):
+        term = self._entry.text().strip()
+        if term and term not in self._terms:
+            self._terms.append(term)
+            self._entry.clear()
+            self._render_pills()
+
+    def _remove_tag(self, term: str):
+        if term in self._terms:
+            self._terms.remove(term)
+            self._render_pills()
+
+    def _render_pills(self):
+        while self._pills_layout.count():
+            item = self._pills_layout.takeAt(0)
+            if item.layout():
+                sub = item.layout()
+                while sub.count():
+                    it = sub.takeAt(0)
+                    if it.widget():
+                        it.widget().deleteLater()
+            elif item.widget():
+                item.widget().deleteLater()
+        for i in range(0, max(len(self._terms), 1), 3):
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            for term in self._terms[i:i + 3]:
+                pill = QFrame()
+                pill.setStyleSheet("QFrame { background: #EEF4FF; border: 1px solid #C5D8F5; border-radius: 12px; }")
+                pl = QHBoxLayout(pill)
+                pl.setContentsMargins(8, 2, 4, 2)
+                pl.setSpacing(2)
+                lbl = QLabel(term)
+                lbl.setFont(QFont("Segoe UI", 11))
+                lbl.setStyleSheet(f"color: {PRIMARY}; border: none; background: transparent;")
+                pl.addWidget(lbl)
+                rem = QPushButton("×")
+                rem.setFixedSize(16, 16)
+                rem.setFlat(True)
+                rem.setStyleSheet(f"QPushButton {{ background: transparent; border: none; color: #888888; }} QPushButton:hover {{ color: {DANGER}; }}")
+                rem.clicked.connect(lambda _, t=term: self._remove_tag(t))
+                pl.addWidget(rem)
+                row.addWidget(pill)
+            row.addStretch()
+            self._pills_layout.addLayout(row)
+
+    def get_terms(self) -> list:
+        return list(self._terms)
+
+
+class EstimateBar(QFrame):
+    def __init__(self, duration="—", words="—", pages="—", parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(64)
+        self.setStyleSheet("EstimateBar { background: #F8F8F8; border: 1px solid #E0E0E0; border-radius: 6px; }")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._val_labels = []
+        for i, (val, key) in enumerate([(duration, "Duração est."), (words, "Palavras"), (pages, "Páginas")]):
+            if i > 0:
+                sep = QFrame()
+                sep.setFixedWidth(1)
+                sep.setStyleSheet("background: #E0E0E0; border: none;")
+                layout.addWidget(sep)
+            cell = QWidget()
+            cell.setStyleSheet("background: transparent; border: none;")
+            cl = QVBoxLayout(cell)
+            cl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cl.setSpacing(2)
+            cl.setContentsMargins(12, 4, 12, 4)
+            val_lbl = QLabel(val)
+            val_lbl.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+            val_lbl.setStyleSheet(f"color: {TEXT_MAIN}; border: none; background: transparent;")
+            val_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            key_lbl = QLabel(key.upper())
+            key_lbl.setFont(QFont("Segoe UI", 9))
+            key_lbl.setStyleSheet("color: #888888; border: none; background: transparent;")
+            key_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cl.addWidget(val_lbl)
+            cl.addWidget(key_lbl)
+            layout.addWidget(cell, stretch=1)
+            self._val_labels.append(val_lbl)
+
+    def update_values(self, duration: str, words: str, pages: str):
+        self._val_labels[0].setText(duration)
+        self._val_labels[1].setText(words)
+        self._val_labels[2].setText(pages)
+
+
+class DocumentPanel(QScrollArea):
+    def __init__(self, header_text: str, header_bg: str, translated: bool = False, parent=None):
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self._peer: "DocumentPanel | None" = None
+        self._syncing = False
+        self._translated = translated
+        self._container = QWidget()
+        self._container.setStyleSheet("background-color: #E8E8E8;")
+        self._cl = QVBoxLayout(self._container)
+        self._cl.setContentsMargins(16, 16, 16, 16)
+        self._cl.setSpacing(16)
+        self._placeholder = QLabel("Nenhum conteúdo.\nInicie uma tradução para visualizar.")
+        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._placeholder.setStyleSheet("color: #AAAAAA; border: none; background: transparent;")
+        self._cl.addStretch()
+        self._cl.addWidget(self._placeholder, alignment=Qt.AlignmentFlag.AlignCenter)
+        self._cl.addStretch()
+        self.setWidget(self._container)
+
+    def populate(self, pages: list, ins_indices: set = None, mod_indices: set = None):
+        ins_indices = ins_indices or set()
+        mod_indices = mod_indices or set()
+        while self._cl.count():
+            item = self._cl.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for i, text in enumerate(pages):
+            page = QFrame()
+            page.setStyleSheet("QFrame { background: #FFFFFF; border: 0.5px solid #CCCCCC; border-radius: 2px; }")
+            page.setFixedWidth(520)
+            pl = QVBoxLayout(page)
+            pl.setContentsMargins(24, 24, 24, 24)
+            lbl = QLabel(text)
+            lbl.setWordWrap(True)
+            lbl.setFont(QFont("Segoe UI", 11))
+            if i in ins_indices:
+                lbl.setStyleSheet("border: none; background: #E8F5E9; border-radius: 2px; padding: 2px; color: #1A1A1A;")
+            elif i in mod_indices:
+                lbl.setStyleSheet("border: none; background: #FFF8E1; border-radius: 2px; padding: 2px; color: #1A1A1A;")
+            else:
+                lbl.setStyleSheet("border: none; background: transparent; color: #1A1A1A;")
+            pl.addWidget(lbl)
+            self._cl.addWidget(page, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self._cl.addStretch()
+
+    def set_peer(self, peer: "DocumentPanel"):
+        self._peer = peer
+
+    def wheelEvent(self, event):
+        if self._syncing:
+            event.ignore()
             return
-        if not os.path.isfile(pdf):
-            messagebox.showerror("Erro", f"PDF não encontrado:\n{pdf}")
-            return
-        pag_str = self._cut_pag_var.get().strip()
-        if not pag_str:
-            messagebox.showerror("Erro", "Informe as páginas a extrair.")
-            return
+        super().wheelEvent(event)
+        if self._peer and not self._peer._syncing:
+            self._syncing = True
+            self._peer._syncing = True
+            self._peer.verticalScrollBar().setValue(self.verticalScrollBar().value())
+            self._peer._syncing = False
+            self._syncing = False
 
-        saida = self._cut_saida_var.get().strip()
-        if not saida:
-            base = os.path.splitext(os.path.basename(pdf))[0]
-            saida = os.path.join(os.path.dirname(pdf),
-                                 f"{base}_recorte.pdf")
-            self._cut_saida_var.set(saida)
 
-        self._btn_cortar.configure(state="disabled")
-        self._cut_status_lbl.configure(text="Recortando…", text_color="gray50")
-        threading.Thread(target=self._run_corte,
-                         args=(pdf, pag_str, saida), daemon=True).start()
+class ActionPanel(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(200)
+        self.setStyleSheet(f"ActionPanel {{ background: #FAFAFA; border-left: 1px solid {BORDER}; }}")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(4)
+        title = QLabel("Ações")
+        title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {TEXT_MAIN}; border: none; background: transparent; margin-bottom: 8px;")
+        layout.addWidget(title)
+        for text in ["💾  Salvar Word", "📄  Exportar PDF", "📋  Copiar texto", "📋  Ver log completo"]:
+            layout.addWidget(self._ghost(text))
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {BORDER}; border: none; border-top: 1px solid {BORDER}; background: transparent;")
+        layout.addWidget(sep)
+        self._back_btn = self._ghost("←  Nova tradução")
+        layout.addWidget(self._back_btn)
+        layout.addStretch()
 
-    def _run_corte(self, pdf: str, pag_str: str, saida: str) -> None:
-        try:
-            n = recortar_pdf(pdf, pag_str, saida)
-            msg  = f"✅ {n} página{'s' if n != 1 else ''} salva{'s' if n != 1 else ''} em: {saida}"
-            color = ("green3", "#4CAF50")
-        except Exception as e:
-            msg   = f"❌ {e}"
-            color = ("#cc4444", "#ff6666")
-        self.after(0, lambda: self._finalizar_corte(msg, color))
+    def _ghost(self, text: str) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setStyleSheet(f"QPushButton {{ background: transparent; border: none; text-align: left; padding: 8px 12px; color: #333333; font-size: 11pt; border-radius: 6px; }} QPushButton:hover {{ background: #F0F0F0; }}")
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        return btn
 
-    def _finalizar_corte(self, msg: str, color) -> None:
-        self._btn_cortar.configure(state="normal")
-        self._cut_status_lbl.configure(text=msg, text_color=color)
+    def connect_back(self, cb):
+        self._back_btn.clicked.connect(cb)
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
-    def _pdf_short_name(self) -> str:
-        p = self._pdf_var.get()
-        if not p:
-            return "Nenhum arquivo selecionado"
-        name = os.path.basename(p)
-        return name[:28] + "…" if len(name) > 30 else name
 
-    def _saida_short_name(self) -> str:
-        p = self._saida_var.get()
-        if not p:
-            return "nome automático"
-        name = os.path.basename(p)
-        return name[:28] + "…" if len(name) > 30 else name
+class DiffBar(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(32)
+        self.setStyleSheet(f"DiffBar {{ background: #F5F5F5; border-top: 1px solid {BORDER}; }}")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setSpacing(16)
+        self._lbl_ins = QLabel("—")
+        self._lbl_ins.setFont(QFont("Segoe UI", 11))
+        self._lbl_ins.setStyleSheet(f"color: {SUCCESS}; border: none; background: transparent;")
+        layout.addWidget(self._lbl_ins)
+        self._lbl_mod = QLabel("—")
+        self._lbl_mod.setFont(QFont("Segoe UI", 11))
+        self._lbl_mod.setStyleSheet(f"color: {WARNING}; border: none; background: transparent;")
+        layout.addWidget(self._lbl_mod)
+        self._lbl_rem = QLabel("—")
+        self._lbl_rem.setFont(QFont("Segoe UI", 11))
+        self._lbl_rem.setStyleSheet(f"color: {DANGER}; border: none; background: transparent;")
+        layout.addWidget(self._lbl_rem)
+        layout.addStretch()
+        sync = QLabel("⟳ Scroll sincronizado")
+        sync.setFont(QFont("Segoe UI", 10))
+        sync.setStyleSheet("color: #888888; border: none; background: transparent;")
+        layout.addWidget(sync)
 
-    def _pdf_size_str(self) -> str:
-        try:
-            sz = os.path.getsize(self._pdf_var.get())
-            if sz >= 1_048_576:
-                return f"{sz/1_048_576:.1f} MB"
-            return f"{sz/1024:.0f} KB"
-        except Exception:
-            return ""
+    def update(self, ins: int, mod: int, rem: int):
+        self._lbl_ins.setText(f"● {ins} inserções")
+        self._lbl_mod.setText(f"● {mod} modificações")
+        self._lbl_rem.setText(f"● {rem} remoções")
 
-    def _fmt_subtitle(self) -> str:
-        fmt = _FMT_BY_LBL.get(self._fmt_var.get(), "docx")
-        nomes = {"docx": "Word (.docx)", "txt": "Texto (.txt)",
-                 "md": "Markdown (.md)", "pdf": "PDF (.pdf)"}
-        return f"PDF → {nomes.get(fmt, fmt)}"
 
-    # ── Glossário ─────────────────────────────────────────────────────────────
-    def _gloss_add(self) -> None:
-        term = self._gloss_entry_var.get().strip()
-        if not term or term in self._gloss_terms:
-            self._gloss_entry_var.set("")
-            return
-        self._gloss_terms.append(term)
-        self._config.set("glossario", self._gloss_terms)
-        self._gloss_render_chip(term)
-        self._gloss_entry_var.set("")
+class ConfigPage(QWidget):
+    translate_requested = pyqtSignal(object)
 
-    def _gloss_render_chip(self, term: str) -> None:
-        chip = ctk.CTkFrame(self._gloss_chips_frame, corner_radius=12,
-                            fg_color=("gray80", "gray25"))
-        chip.pack(side="left", padx=(0, 4), pady=2)
-        ctk.CTkLabel(chip, text=term, font=ctk.CTkFont(size=10),
-                     padx=8).pack(side="left")
-        ctk.CTkButton(chip, text="×", width=18, height=18,
-                      fg_color="transparent", text_color="gray50",
-                      hover_color=("gray70", "gray35"),
-                      font=ctk.CTkFont(size=11),
-                      command=lambda t=term: self._gloss_remove(t)).pack(side="left", padx=(0, 4))
-        self._gloss_chip_widgets[term] = chip
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pdf_path = ""
+        main = QHBoxLayout(self)
+        main.setContentsMargins(16, 16, 16, 16)
+        main.setSpacing(12)
 
-    def _gloss_remove(self, term: str) -> None:
-        if term in self._gloss_terms:
-            self._gloss_terms.remove(term)
-            self._config.set("glossario", self._gloss_terms)
-        w = self._gloss_chip_widgets.pop(term, None)
-        if w:
-            w.destroy()
+        left = QWidget()
+        left.setStyleSheet("background: transparent; border: none;")
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(10)
+        self._drop_zone = DropZone()
+        self._drop_zone.setMinimumHeight(320)
+        self._drop_zone.file_dropped.connect(self._on_file)
+        ll.addWidget(SectionCard("ARQUIVO", self._drop_zone))
 
-    def _historico_render(self) -> None:
-        if not hasattr(self, "_hist_scroll"):
-            return
-        for w in self._hist_scroll.winfo_children():
-            w.destroy()
-        hist = self._config.get("historico", [])
-        if not hist:
-            ctk.CTkLabel(self._hist_scroll, text="Nenhuma tradução registrada ainda.",
-                         text_color="gray50", font=ctk.CTkFont(size=12)).pack(pady=24)
-            return
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-        fmt_icons = {"docx": "📝", "txt": "📄", "md": "🗒️", "pdf": "📕"}
-        for entry in hist:
-            card = ctk.CTkFrame(self._hist_scroll, corner_radius=8)
-            card.pack(fill="x", pady=(0, 6))
-            card.columnconfigure(1, weight=1)
+        pag_hdr = QLabel("INTERVALO DE PÁGINAS")
+        pag_hdr.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        pag_hdr.setStyleSheet(f"color: {TEXT_LABEL}; background: transparent; border: none;")
+        ll.addWidget(pag_hdr)
+        pag_row = QHBoxLayout()
+        pag_row.setSpacing(6)
+        for w in [QLabel("De")]:
+            w.setStyleSheet("border: none; background: transparent;")
+            pag_row.addWidget(w)
+        self._spin_ini = QSpinBox()
+        self._spin_ini.setMinimum(1)
+        self._spin_ini.setFixedWidth(70)
+        pag_row.addWidget(self._spin_ini)
+        lbl_ate = QLabel("até")
+        lbl_ate.setStyleSheet("border: none; background: transparent;")
+        pag_row.addWidget(lbl_ate)
+        self._spin_fim = QSpinBox()
+        self._spin_fim.setMinimum(1)
+        self._spin_fim.setFixedWidth(70)
+        pag_row.addWidget(self._spin_fim)
+        todas = QPushButton("Todas")
+        todas.setStyleSheet(f"QPushButton {{ background: {BG_SURFACE}; border: 1px solid #CCCCCC; border-radius: 6px; padding: 5px 12px; color: #333333; }} QPushButton:hover {{ background: #F5F5F5; }}")
+        todas.clicked.connect(lambda: (self._spin_ini.setValue(1), self._spin_fim.setValue(self._spin_fim.maximum())))
+        pag_row.addWidget(todas)
+        self._pag_lbl = QLabel("1 página selecionada")
+        self._pag_lbl.setStyleSheet(f"color: {TEXT_SEC}; border: none; background: transparent;")
+        pag_row.addWidget(self._pag_lbl)
+        pag_row.addStretch()
+        self._spin_ini.valueChanged.connect(self._upd_pag)
+        self._spin_fim.valueChanged.connect(self._upd_pag)
+        ll.addLayout(pag_row)
+        ll.addStretch()
+        main.addWidget(left, stretch=1)
 
-            icon = fmt_icons.get(entry.get("fmt", "docx"), "📄")
-            ctk.CTkLabel(card, text=icon, font=ctk.CTkFont(size=22),
-                         width=40).grid(row=0, column=0, rowspan=2,
-                                        padx=(10, 4), pady=10)
+        right = QWidget()
+        right.setStyleSheet("background: transparent; border: none;")
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(10)
 
-            nome = os.path.basename(entry.get("pdf", ""))
-            nome = nome[:34] + "…" if len(nome) > 36 else nome
-            ctk.CTkLabel(card, text=nome,
-                         font=ctk.CTkFont(size=12, weight="bold"),
-                         anchor="w").grid(row=0, column=1, sticky="ew",
-                                          padx=(0, 4), pady=(8, 0))
+        lang_w = QWidget()
+        lang_w.setStyleSheet("background: transparent; border: none;")
+        lang_l = QVBoxLayout(lang_w)
+        lang_l.setContentsMargins(0, 0, 0, 0)
+        lang_l.setSpacing(4)
+        lang_row = QHBoxLayout()
+        lang_row.setSpacing(8)
+        self._combo_src = QComboBox()
+        self._combo_src.setFixedWidth(180)
+        for name, code in LANG_SRC:
+            self._combo_src.addItem(f"{name} ({code})", code)
+        self._combo_src.setCurrentText("Inglês (en)")
+        lang_row.addWidget(self._combo_src)
+        arr = QLabel("→")
+        arr.setStyleSheet("border: none; background: transparent; color: #888888;")
+        lang_row.addWidget(arr)
+        self._combo_dst = QComboBox()
+        self._combo_dst.setFixedWidth(180)
+        for name, code in LANG_DST:
+            self._combo_dst.addItem(name, code)
+        lang_row.addWidget(self._combo_dst)
+        lang_row.addStretch()
+        lang_l.addLayout(lang_row)
+        self._detect_lbl = QLabel("● Idioma detectado: Inglês (99%)")
+        self._detect_lbl.setFont(QFont("Segoe UI", 10))
+        self._detect_lbl.setStyleSheet(f"color: {SUCCESS}; border: none; background: transparent;")
+        self._detect_lbl.setVisible(False)
+        lang_l.addWidget(self._detect_lbl)
+        rl.addWidget(SectionCard("IDIOMA", lang_w))
 
-            src  = entry.get("lang_src", "?")
-            dst  = entry.get("lang_dst", "?")
-            pini = entry.get("pag_ini", "?")
-            pfim = entry.get("pag_fim", "?")
+        self._fmt_seg = SegmentedButton(["Word", "TXT", "Markdown", "PDF"], "Word")
+        rl.addWidget(SectionCard("FORMATO DE SAÍDA", self._fmt_seg))
+        self._modo_seg = SegmentedButton(["Novo arquivo", "Continuar", "Substituir"], "Novo arquivo")
+        rl.addWidget(SectionCard("MODO", self._modo_seg))
+
+        saida_w = QWidget()
+        saida_w.setStyleSheet("background: transparent; border: none;")
+        saida_l = QHBoxLayout(saida_w)
+        saida_l.setContentsMargins(0, 0, 0, 0)
+        saida_l.setSpacing(4)
+        self._saida_entry = QLineEdit("output.docx")
+        saida_l.addWidget(self._saida_entry)
+        browse = QPushButton("...")
+        browse.setFixedSize(32, 32)
+        browse.setStyleSheet(f"QPushButton {{ background: {BG_SURFACE}; border: 1px solid #CCCCCC; border-radius: 4px; color: {TEXT_SEC}; }} QPushButton:hover {{ background: #F5F5F5; }}")
+        browse.clicked.connect(self._browse_saida)
+        saida_l.addWidget(browse)
+        rl.addWidget(SectionCard("ARQUIVO DE SAÍDA", saida_w))
+
+        self._gloss = GlossaryWidget()
+        rl.addWidget(SectionCard("GLOSSÁRIO", self._gloss))
+        self._estimate = EstimateBar("—", "—", "—")
+        rl.addWidget(self._estimate)
+
+        self._translate_btn = QPushButton("▶   Traduzir")
+        self._translate_btn.setFixedHeight(42)
+        self._translate_btn.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self._translate_btn.setStyleSheet(f"QPushButton {{ background: {PRIMARY}; color: white; border: none; border-radius: 8px; }} QPushButton:hover {{ background: {PRIMARY_HOV}; }} QPushButton:disabled {{ background: #AAAAAA; }}")
+        self._translate_btn.clicked.connect(self._on_translate)
+        rl.addWidget(self._translate_btn)
+        main.addWidget(right, stretch=1)
+
+    def _on_file(self, path: str):
+        self._pdf_path = path
+        if path:
             try:
-                dt   = datetime.fromisoformat(entry["data_iso"])
-                diff = now - dt
-                days = diff.days
-                data_str = ("hoje" if days == 0
-                            else "ontem" if days == 1
-                            else f"há {days} dias")
+                import fitz
+                doc = fitz.open(path)
+                n = doc.page_count
+                doc.close()
+                self._spin_ini.setMaximum(n)
+                self._spin_fim.setMaximum(n)
+                self._spin_fim.setValue(n)
             except Exception:
-                data_str = ""
-            dur = entry.get("duracao_s", 0)
-            dur_str = f"{dur}s" if dur < 60 else f"{dur//60}min"
-            meta = f"{src} → {dst}  ·  págs {pini}–{pfim}  ·  {data_str}  ·  {dur_str}"
-            ctk.CTkLabel(card, text=meta,
-                         font=ctk.CTkFont(size=10), text_color="gray50",
-                         anchor="w").grid(row=1, column=1, sticky="ew",
-                                          padx=(0, 4), pady=(0, 8))
+                n = 0
+            fmt = FMT_MAP.get(self._fmt_seg.get_selected(), "docx")
+            self._saida_entry.setText(os.path.splitext(path)[0] + "." + fmt)
+            threading.Thread(target=self._detect_lang, args=(path,), daemon=True).start()
+            threading.Thread(
+                target=self._compute_estimate,
+                args=(path, self._spin_ini.value(), self._spin_fim.value()),
+                daemon=True,
+            ).start()
+        else:
+            self._estimate.update_values("—", "—", "—")
+        self._upd_pag()
 
-            ctk.CTkButton(card, text="📂 Reabrir", width=80, height=26,
-                          command=lambda e=entry: self._historico_reabrir(e)).grid(
-                row=0, column=2, rowspan=2, padx=10)
+    def _detect_lang(self, path: str):
+        try:
+            from langdetect import detect, DetectorFactory
+            DetectorFactory.seed = 0
+            import pdfplumber
+            with pdfplumber.open(path) as p:
+                txt = (p.pages[0].extract_text() or "")[:2000]
+            if len(txt.strip()) > 20:
+                code = detect(txt)
+                names = {"en": "Inglês", "pt": "Português", "es": "Espanhol", "fr": "Francês", "de": "Alemão"}
+                name = names.get(code, code)
+                QTimer.singleShot(0, lambda: (
+                    self._detect_lbl.setText(f"● Idioma detectado: {name}"),
+                    self._detect_lbl.setVisible(True)
+                ))
+        except Exception:
+            pass
 
-    def _historico_limpar(self) -> None:
-        self._config.set("historico", [])
-        self._historico_render()
+    def _compute_estimate(self, path: str, ini: int, fim: int):
+        try:
+            import pdfplumber
+            words = 0
+            with pdfplumber.open(path) as p:
+                for i in range(ini - 1, min(fim, len(p.pages))):
+                    words += len((p.pages[i].extract_text() or "").split())
+            pages = fim - ini + 1
+            mins = max(1, round(pages / 3.0))
+            dur_str = f"~{mins} min"
+            words_str = f"{words / 1000:.1f}k" if words >= 1000 else str(words)
+            pages_str = str(pages)
+        except Exception:
+            pages = fim - ini + 1
+            dur_str = f"~{max(1, round(pages / 3.0))} min"
+            words_str = "—"
+            pages_str = str(pages)
+        QTimer.singleShot(0, lambda: self._estimate.update_values(dur_str, words_str, pages_str))
 
-    def _historico_reabrir(self, entry: dict) -> None:
-        pdf = entry.get("pdf", "")
-        if not os.path.isfile(pdf):
-            messagebox.showerror("Erro", f"Arquivo não encontrado:\n{pdf}")
+    def _upd_pag(self):
+        ini, fim = self._spin_ini.value(), self._spin_fim.value()
+        if fim < ini:
+            self._spin_fim.setValue(ini)
+            fim = ini
+        n = fim - ini + 1
+        self._pag_lbl.setText(f"{n} página{'s' if n > 1 else ''} selecionada{'s' if n > 1 else ''}")
+        if self._pdf_path:
+            threading.Thread(
+                target=self._compute_estimate,
+                args=(self._pdf_path, ini, fim),
+                daemon=True,
+            ).start()
+
+    def _browse_saida(self):
+        fmt = FMT_MAP.get(self._fmt_seg.get_selected(), "docx")
+        filt = {"docx": "Word (*.docx)", "txt": "TXT (*.txt)", "md": "Markdown (*.md)", "pdf": "PDF (*.pdf)"}.get(fmt, "Word (*.docx)")
+        path, _ = QFileDialog.getSaveFileName(self, "Salvar como", self._saida_entry.text(), filt)
+        if path:
+            self._saida_entry.setText(path)
+
+    def _on_translate(self):
+        from sibylatranslate.models import TranslationConfig
+        if not self._pdf_path:
+            QMessageBox.warning(self, "Aviso", "Selecione um arquivo PDF primeiro.")
             return
-        self._pdf_var.set(pdf)
-        self._config.set("ultimo_pdf", pdf)
-        self._pdf_name_lbl.configure(text=self._pdf_short_name())
-        self._pag_ini_var.set(str(entry.get("pag_ini", 1)))
-        self._pag_fim_var.set(str(entry.get("pag_fim", 1)))
-        src = entry.get("lang_src", "en")
-        dst = entry.get("lang_dst", "pt")
-        self._lang_src_var.set(_DISPLAY_BY_CODE.get(src, src))
-        self._lang_dst_var.set(_DISPLAY_BY_CODE.get(dst, dst))
-        fmt = entry.get("fmt", "docx")
-        self._fmt_var.set(_LBL_BY_FMT.get(fmt, "Word"))
+        fmt  = FMT_MAP.get(self._fmt_seg.get_selected(), "docx")
+        modo = MODO_MAP.get(self._modo_seg.get_selected(), "novo")
+        saida = self._saida_entry.text().strip() or (os.path.splitext(self._pdf_path)[0] + "." + fmt)
+        src = self._combo_src.currentData() or "en"
+        dst = self._combo_dst.currentData() or "pt"
+        cfg = TranslationConfig(
+            pdf=self._pdf_path, pag_ini=self._spin_ini.value(),
+            pag_fim=self._spin_fim.value(), modo=modo, base=None,
+            saida=saida, lang_src=src if src != "auto" else "en",
+            lang_dst=dst, fmt=fmt, glossario=self._gloss.get_terms(),
+        )
+        self.translate_requested.emit(cfg)
+
+    def set_translating(self, active: bool):
+        self._translate_btn.setEnabled(not active)
+        self._translate_btn.setText("Traduzindo..." if active else "▶   Traduzir")
+
+    def restore_from_history(self, entry: dict):
+        pdf = entry.get("pdf", "")
+        if os.path.isfile(pdf):
+            self._drop_zone.load_file(pdf)
+        self._spin_ini.setValue(entry.get("pag_ini", 1))
+        self._spin_fim.setValue(entry.get("pag_fim", 1))
         saida = entry.get("saida", "")
         if saida:
-            self._saida_var.set(saida)
-        self._atualizar_total_paginas()
-        self._tabview.set("Original")
+            self._saida_entry.setText(saida)
 
-    def _on_tab_change(self) -> None:
-        if self._tabview.get() == "Original":
-            self.after(50, self._preview.renderizar)
 
-    def _toggle_tema(self) -> None:
-        nxt = "light" if self._tema_var.get() == "dark" else "dark"
-        self._tema_var.set(nxt)
-        self._tema_btn.configure(text=nxt)
-        ctk.set_appearance_mode(nxt)
-        self._config.set("tema", nxt)
+class ResultPage(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(0)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(6)
+        splitter.setStyleSheet(f"QSplitter::handle {{ background: {BORDER}; }}")
 
-    def _swap_languages(self) -> None:
-        src = self._lang_src_var.get()
-        self._lang_src_var.set(self._lang_dst_var.get())
-        self._lang_dst_var.set(src)
+        for header_text, header_bg, translated in [
+            ("  Original · EN", "#F5F5F5", False),
+            ("  Traduzido · PT-BR", "#EBF4FF", True),
+        ]:
+            panel_w = QWidget()
+            panel_w.setStyleSheet("background: transparent; border: none;")
+            pl = QVBoxLayout(panel_w)
+            pl.setContentsMargins(0, 0, 0, 0)
+            pl.setSpacing(0)
+            hdr = QFrame()
+            hdr.setFixedHeight(36)
+            hdr.setStyleSheet(f"background: {header_bg}; border-bottom: 1px solid {BORDER};")
+            hdrl = QHBoxLayout(hdr)
+            hdrl.setContentsMargins(8, 0, 8, 0)
+            hdr_lbl = QLabel(header_text)
+            hdr_lbl.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+            hdr_lbl.setStyleSheet(f"color: {'#0C447C' if translated else TEXT_SEC}; border: none; background: transparent;")
+            hdrl.addWidget(hdr_lbl)
+            hdrl.addStretch()
+            pl.addWidget(hdr)
+            doc_panel = DocumentPanel(header_text, header_bg, translated)
+            pl.addWidget(doc_panel)
+            splitter.addWidget(panel_w)
+            if translated:
+                self._trad_doc = doc_panel
+            else:
+                self._orig_doc = doc_panel
 
-    # ── Seletores de arquivo ──────────────────────────────────────────────────
-    def _selecionar_pdf(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Selecionar PDF",
-            filetypes=[("PDF", "*.pdf"), ("Todos", "*.*")],
-            initialdir=os.path.dirname(self._config.get("ultimo_pdf", "") or os.getcwd()),
-        )
-        if path:
-            self._pdf_var.set(path)
-            self._config.set("ultimo_pdf", path)
-            self._pdf_name_lbl.configure(text=self._pdf_short_name())
-            self._atualizar_total_paginas()
+        self._orig_doc.set_peer(self._trad_doc)
+        self._trad_doc.set_peer(self._orig_doc)
+        content_row.addWidget(splitter, stretch=1)
+        self._action_panel = ActionPanel()
+        content_row.addWidget(self._action_panel)
+        outer.addLayout(content_row, stretch=1)
+        self._diff_bar = DiffBar()
+        outer.addWidget(self._diff_bar)
 
-    def _selecionar_base(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Selecionar .docx base",
-            filetypes=[("Word", "*.docx"), ("Todos", "*.*")],
-            initialdir=os.path.dirname(self._base_var.get()) or os.getcwd(),
-        )
-        if path:
-            self._base_var.set(path)
-            self._config.set("ultimo_docx", path)
+    def connect_back(self, cb):
+        self._action_panel.connect_back(cb)
 
-    def _selecionar_saida(self) -> None:
-        fmt = _FMT_BY_LBL.get(self._fmt_var.get(), "docx")
-        ext_map = {"docx": (".docx", "Word", "*.docx"),
-                   "txt":  (".txt",  "Texto", "*.txt"),
-                   "md":   (".md",   "Markdown", "*.md"),
-                   "pdf":  (".pdf",  "PDF", "*.pdf")}
-        def_ext, tipo_nome, tipo_glob = ext_map.get(fmt, (".docx", "Word", "*.docx"))
-        path = filedialog.asksaveasfilename(
-            title="Salvar como…",
-            defaultextension=def_ext,
-            filetypes=[(tipo_nome, tipo_glob), ("Todos", "*.*")],
-            initialdir=os.path.dirname(self._saida_var.get()) or os.getcwd(),
-        )
-        if path:
-            self._saida_var.set(path)
-            self._config.set("ultima_saida", path)
+    def populate(self, orig_pages: list, trad_pages: list, toolbar_total_lbl: "QLabel"):
+        import difflib
+        sm = difflib.SequenceMatcher(None, orig_pages, trad_pages, autojunk=False)
+        ins = mod = rem = 0
+        ins_idx: set = set()
+        mod_idx: set = set()
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "insert":
+                ins += j2 - j1
+                ins_idx.update(range(j1, j2))
+            elif tag == "replace":
+                mod += max(i2 - i1, j2 - j1)
+                mod_idx.update(range(j1, j2))
+            elif tag == "delete":
+                rem += i2 - i1
+        self._orig_doc.populate(orig_pages)
+        self._trad_doc.populate(trad_pages, ins_idx, mod_idx)
+        self._diff_bar.update(ins, mod, rem)
+        toolbar_total_lbl.setText(f"/ {len(orig_pages)}")
 
-    def _atualizar_total_paginas(self) -> None:
-        pdf = self._pdf_var.get()
-        if not pdf or not os.path.isfile(pdf):
-            self._total_var.set("")
-            return
+
+class Toolbar(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(48)
+        self.setStyleSheet(f"Toolbar {{ background: {BG_SURFACE}; border-bottom: 1px solid {BORDER}; }}")
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(12, 0, 12, 0)
+        self._layout.setSpacing(4)
+        self.open_btn     = self._secondary("📂  Abrir")
+        self.traduzir_btn = self._primary("▶  Traduzir")
+        self.hist_btn     = self._secondary("🕐  Histórico")
+        for w in [self.open_btn, self._vsep(), self.traduzir_btn, self._vsep(), self.hist_btn]:
+            self._layout.addWidget(w)
+        self._result_grp = QWidget()
+        self._result_grp.setStyleSheet("background: transparent; border: none;")
+        rg = QHBoxLayout(self._result_grp)
+        rg.setContentsMargins(0, 0, 0, 0)
+        rg.setSpacing(4)
+        self.prev_btn = self._secondary("‹")
+        self.prev_btn.setFixedWidth(32)
+        self.next_btn = self._secondary("›")
+        self.next_btn.setFixedWidth(32)
+        self.page_edit = QLineEdit("1")
+        self.page_edit.setFixedWidth(48)
+        self.page_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.total_lbl = QLabel("/ —")
+        self.total_lbl.setStyleSheet(f"color: {TEXT_SEC}; border: none; background: transparent;")
+        self.zoom_combo = QComboBox()
+        self.zoom_combo.addItems(["75%", "100%", "125%", "150%"])
+        self.zoom_combo.setCurrentText("100%")
+        self.zoom_combo.setFixedWidth(72)
+        self.save_btn = self._primary("💾  Salvar resultado")
+        for w in [self._vsep(), self.prev_btn, self.page_edit, self.total_lbl,
+                  self.next_btn, self._vsep(), self.zoom_combo, self._vsep(), self.save_btn]:
+            rg.addWidget(w)
+        self._result_grp.setVisible(False)
+        self._layout.addWidget(self._result_grp)
+        self._layout.addStretch()
+
+    def _vsep(self) -> QFrame:
+        f = QFrame()
+        f.setFixedSize(1, 28)
+        f.setStyleSheet(f"background: {BORDER}; border: none;")
+        return f
+
+    def _primary(self, text: str) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setStyleSheet(f"QPushButton {{ background: {PRIMARY}; color: white; border: none; border-radius: 6px; padding: 6px 18px; font-size: 11pt; }} QPushButton:hover {{ background: {PRIMARY_HOV}; }} QPushButton:disabled {{ background: #AAAAAA; }}")
+        return btn
+
+    def _secondary(self, text: str) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setStyleSheet(f"QPushButton {{ background: {BG_SURFACE}; border: 1px solid #CCCCCC; border-radius: 6px; padding: 5px 12px; color: #333333; font-size: 11pt; }} QPushButton:hover {{ background: #F5F5F5; }}")
+        return btn
+
+    def show_result_mode(self):
+        self._result_grp.setVisible(True)
+
+    def show_config_mode(self):
+        self._result_grp.setVisible(False)
+
+
+class StatusBar(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(28)
+        self.setStyleSheet(f"StatusBar {{ background: #F5F5F5; border-top: 1px solid {BORDER}; }}")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setSpacing(8)
+        self._status_lbl = QLabel("Pronto")
+        self._status_lbl.setFont(QFont("Segoe UI", 9))
+        self._status_lbl.setStyleSheet("color: #444444; border: none; background: transparent;")
+        layout.addWidget(self._status_lbl)
+        layout.addStretch()
+        self._progress = QProgressBar()
+        self._progress.setFixedSize(200, 6)
+        self._progress.setTextVisible(False)
+        self._progress.setRange(0, 100)
+        self._progress.setValue(0)
+        self._progress.setVisible(False)
+        layout.addWidget(self._progress)
+        self._est_lbl = QLabel("")
+        self._est_lbl.setFont(QFont("Segoe UI", 9))
+        self._est_lbl.setStyleSheet("color: #666666; border: none; background: transparent;")
+        layout.addWidget(self._est_lbl)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._tick_val = 0
+
+    def start_progress(self):
+        self._tick_val = 0
+        self._progress.setValue(0)
+        self._progress.setVisible(True)
+        self._status_lbl.setText("Traduzindo...")
+        self._timer.start(80)
+
+    def _tick(self):
+        self._tick_val = min(self._tick_val + 1, 95)
+        self._progress.setValue(self._tick_val)
+
+    def finish_progress(self):
+        self._timer.stop()
+        self._progress.setValue(100)
+        QTimer.singleShot(400, lambda: self._progress.setVisible(False))
+        self._status_lbl.setText("Concluído")
+
+    def set_text(self, text: str):
+        self._status_lbl.setText(text)
+
+    def set_estimate(self, text: str):
+        self._est_lbl.setText(text)
+
+    def show_progress_value(self, val: int):
+        self._timer.stop()
+        self._progress.setVisible(True)
+        self._progress.setValue(val)
+
+    def reset(self):
+        self._timer.stop()
+        self._progress.setVisible(False)
+        self._progress.setValue(0)
+        self._status_lbl.setText("Pronto")
+        self._est_lbl.setText("")
+
+
+class TranslationWorker(QThread):
+    log_line       = pyqtSignal(str)
+    finished       = pyqtSignal(bool, str)
+
+    def __init__(self, cfg):
+        super().__init__()
+        self._cfg    = cfg
+        self._cancel = threading.Event()
+
+    def cancel(self):
+        self._cancel.set()
+
+    def run(self):
+        import sys as _sys
+        from sibylatranslate.engine import processar
+        orig = _sys.stdout
+        sig  = self.log_line
+        class _Cap:
+            def write(self, t):
+                if t.strip(): sig.emit(t.strip())
+                orig.write(t)
+            def flush(self): orig.flush()
+        _sys.stdout = _Cap()
         try:
-            with pdfplumber.open(pdf) as p:
-                total = len(p.pages)
-            self._total_var.set(f"{total} páginas  ·  {self._pdf_size_str()}")
-            self._pag_fim_var.set(str(total))
-        except Exception:
-            self._total_var.set("(não foi possível ler o PDF)")
-            return
-        self._preview.abrir(pdf)
-        self._tabview.set("Original")
-        self._toggle_main_view()
-        if _LANGDETECT_AVAILABLE:
-            threading.Thread(target=self._detect_lang_bg,
-                             args=(pdf,), daemon=True).start()
-
-    def _detect_lang_bg(self, pdf: str) -> None:
-        try:
-            with pdfplumber.open(pdf) as p:
-                text = (p.pages[0].extract_text() or "")[:2000]
-            if len(text.strip()) < 20:
-                return
-            code = _langdetect(text)
-            display = _DISPLAY_BY_CODE.get(code, "")
-            if display:
-                def _apply() -> None:
-                    self._lang_src_var.set(display)
-                    self._lang_detect_lbl.configure(
-                        text=f"● Detectado: {display.split(' (')[0]}")
-                self.after(0, _apply)
-        except Exception:
-            pass
-
-    def _todas_paginas(self) -> None:
-        pdf = self._pdf_var.get()
-        if not pdf or not os.path.isfile(pdf):
-            return
-        try:
-            with pdfplumber.open(pdf) as p:
-                self._pag_fim_var.set(str(len(p.pages)))
-            self._pag_ini_var.set("1")
-        except Exception:
-            pass
-
-    # ── Modo / Formato / Tema ─────────────────────────────────────────────────
-    def _on_modo_change(self, value: str = None) -> None:
-        modo_lbl = self._modo_var.get()
-        if modo_lbl in ("Continuar", "Substituir"):
-            if not self._base_visible:
-                self._base_frame.pack(fill="x", padx=16, pady=(0, 8),
-                                      after=self._modo_seg)
-                self._base_visible = True
-        else:
-            if self._base_visible:
-                self._base_frame.pack_forget()
-                self._base_visible = False
-
-    def _on_fmt_change(self, value: str = None) -> None:
-        fmt = _FMT_BY_LBL.get(self._fmt_var.get(), "docx")
-        self._config.set("fmt", fmt)
-        saida = self._saida_var.get().strip()
-        if saida:
-            base = os.path.splitext(saida)[0]
-            ext  = {"docx": ".docx", "txt": ".txt", "md": ".md", "pdf": ".pdf"}.get(fmt, ".docx")
-            self._saida_var.set(base + ext)
-        if hasattr(self, "_subtitle_lbl"):
-            self._subtitle_lbl.configure(text=self._fmt_subtitle())
-
-    # ── Log ───────────────────────────────────────────────────────────────────
-    def _flush_log(self) -> None:
-        try:
-            while True:
-                texto = self._log_queue.get_nowait()
-                self._log_box.configure(state="normal")
-                self._log_box.insert("end", texto)
-                self._log_box.see("end")
-                self._log_box.configure(state="disabled")
-                m = re.search(r"\[(\d+)/(\d+)\]", texto)
-                if m:
-                    atual, total = int(m.group(1)), int(m.group(2))
-                    self._progress.set(atual / total)
-                    self._sb_progress.set(atual / total)
-                    elapsed = time.time() - self._start_time if self._start_time else 0
-                    if elapsed > 0 and atual > 0:
-                        ppm = atual / (elapsed / 60)
-                        rest_min = (total - atual) / ppm if ppm > 0 else 0
-                        vel_str  = f"{ppm:.1f} pág/min"
-                        rest_str = (f"~{int(rest_min)} min restantes"
-                                    if rest_min >= 1 else "< 1 min")
-                    else:
-                        vel_str = rest_str = ""
-                    self._lbl_status.configure(text=f"Página {atual} de {total}")
-                    self._sb_lbl_paginas.configure(text=f"Página {atual} / {total}")
-                    self._sb_lbl_vel.configure(text=vel_str)
-                    self._sb_lbl_rest.configure(text=rest_str)
-        except queue.Empty:
-            pass
-        self._after_flush = self.after(100, self._flush_log)
-
-    def _log(self, msg: str) -> None:
-        self._log_box.configure(state="normal")
-        self._log_box.insert("end", msg + "\n")
-        self._log_box.see("end")
-        self._log_box.configure(state="disabled")
-
-    def _limpar_log(self) -> None:
-        self._log_box.configure(state="normal")
-        self._log_box.delete("1.0", "end")
-        self._log_box.configure(state="disabled")
-
-    # ── Validação e coleta ────────────────────────────────────────────────────
-    def _flash_pdf_card(self) -> None:
-        self._pdf_card.configure(border_width=2, border_color="#e05555")
-        self.after(1200, lambda: self._pdf_card.configure(
-            border_width=0, border_color="transparent"))
-
-    def _collect_config(self) -> TranslationConfig | None:
-        pdf = self._pdf_var.get().strip()
-        if not pdf:
-            self._flash_pdf_card()
-            messagebox.showerror("Erro", "Selecione um arquivo PDF.")
-            return None
-        if not os.path.isfile(pdf):
-            self._flash_pdf_card()
-            messagebox.showerror("Erro", f"PDF não encontrado:\n{pdf}")
-            return None
-        try:
-            ini = int(self._pag_ini_var.get())
-            fim = int(self._pag_fim_var.get())
-            if ini < 1 or fim < ini:
-                raise ValueError
-        except ValueError:
-            messagebox.showerror("Erro", "Intervalo de páginas inválido.")
-            return None
-
-        modo = _MODO_BY_LBL.get(self._modo_var.get(), "novo")
-        base: str | None = None
-        if modo in ("append", "replace"):
-            base = self._base_var.get().strip() or None
-            if not base:
-                messagebox.showerror("Erro", "Selecione o arquivo .docx base.")
-                return None
-            if not os.path.isfile(base):
-                messagebox.showerror("Erro", f"Arquivo base não encontrado:\n{base}")
-                return None
-
-        fmt   = _FMT_BY_LBL.get(self._fmt_var.get(), "docx")
-        saida = self._saida_var.get().strip()
-        ext   = {"docx": ".docx", "txt": ".txt", "md": ".md", "pdf": ".pdf"}.get(fmt, ".docx")
-        if not saida:
-            nome_base = os.path.splitext(os.path.basename(pdf))[0]
-            saida = (
-                os.path.join(os.path.dirname(pdf),
-                             f"{nome_base}_p{ini}-p{fim}{ext}")
-                if modo == "novo" else base
+            processar(
+                self._cfg.pdf, self._cfg.pag_ini, self._cfg.pag_fim,
+                self._cfg.saida, self._cfg.modo, self._cfg.base,
+                cancel_event=self._cancel,
+                lang_src=self._cfg.lang_src, lang_dst=self._cfg.lang_dst,
+                fmt=self._cfg.fmt, glossario=self._cfg.glossario,
             )
-
-        lang_src = _lang_code(self._lang_src_var.get().strip()) or "en"
-        lang_dst = _lang_code(self._lang_dst_var.get().strip()) or "pt"
-        self._config.set("lang_src", lang_src)
-        self._config.set("lang_dst", lang_dst)
-        self._config.set("fmt", fmt)
-        self._config.set("modo", modo)
-        glossario = self._config.get("glossario", [])
-        return TranslationConfig(pdf=pdf, pag_ini=ini, pag_fim=fim,
-                                 modo=modo, base=base, saida=saida,
-                                 lang_src=lang_src, lang_dst=lang_dst, fmt=fmt,
-                                 glossario=glossario)
-
-    # ── Execução ──────────────────────────────────────────────────────────────
-    def _iniciar(self) -> None:
-        cfg = self._collect_config()
-        if cfg is None:
-            return
-
-        if not self._config.get("ocr_aviso_visto", False):
-            self._config.set("ocr_aviso_visto", True)
-            messagebox.showinfo(
-                "Aviso — OCR",
-                "Se alguma página do PDF não contiver texto (ex.: imagem escaneada), "
-                "o OCR será ativado automaticamente.\n\n"
-                "Na primeira vez, o EasyOCR precisa baixar o modelo de reconhecimento "
-                "(~100 MB). Isso pode levar alguns minutos e a interface parecerá "
-                "parada — isso é normal. As execuções seguintes serão instantâneas."
-            )
-
-        self._tabview.set("Log")
-        self._log(f"▶ Iniciando tradução: páginas {cfg.pag_ini}–{cfg.pag_fim}"
-                  f"  |  modo: {cfg.modo.upper()}  |  {cfg.lang_src} → {cfg.lang_dst}"
-                  f"  |  {cfg.fmt.upper()}")
-        self._log(f"  Saída: {cfg.saida}\n")
-        self._progress.set(0)
-        self._sb_progress.set(0)
-        self._sb_lbl_paginas.configure(text="Iniciando…")
-        self._sb_lbl_vel.configure(text="")
-        self._sb_lbl_rest.configure(text="")
-        self._lbl_status.configure(text="Iniciando…")
-        self._btn_traduzir.configure(state="disabled")
-        self._btn_cancelar.configure(state="normal")
-        self._cancel_event.clear()
-        self._start_time = time.time()
-        self._log_redirector.install()
-
-        self._worker = threading.Thread(target=self._run_worker, args=(cfg,), daemon=True)
-        self._worker.start()
-
-    def _run_worker(self, cfg: TranslationConfig) -> None:
-        self._last_cfg = cfg
-        try:
-            processar(cfg.pdf, cfg.pag_ini, cfg.pag_fim, cfg.saida, cfg.modo, cfg.base,
-                      cancel_event=self._cancel_event,
-                      lang_src=cfg.lang_src, lang_dst=cfg.lang_dst, fmt=cfg.fmt,
-                      glossario=cfg.glossario)
-            self._log_queue.put(f"\n✅ Concluído! Arquivo salvo em:\n   {cfg.saida}\n")
-            # Populate compare view with original text
-            self.after(0, lambda: self._populate_compare(cfg))
+            _sys.stdout = orig
+            self.finished.emit(True, self._cfg.saida)
         except Exception as e:
-            self._log_queue.put(f"\n❌ Erro: {e}\n")
-        finally:
-            self._log_redirector.uninstall()
-            self.after(0, self._finalizar)
+            _sys.stdout = orig
+            self.finished.emit(False, str(e))
 
-    def _populate_compare(self, cfg: TranslationConfig) -> None:
-        """Abre original e traduzido como fitz docs e preenche o painel Comparar."""
-        # Fecha docs anteriores
-        for attr in ("_cmp_fitz_orig", "_cmp_fitz_trad"):
-            doc = getattr(self, attr, None)
-            if doc:
-                try:
-                    doc.close()
-                except Exception:
-                    pass
-            setattr(self, attr, None)
-        self._cmp_pages_trad = []
 
-        # Abre original
-        try:
-            self._cmp_fitz_orig = fitz.open(cfg.pdf)
-            self._cmp_total = len(self._cmp_fitz_orig)
-        except Exception:
-            self._cmp_fitz_orig = None
-            self._cmp_total = 0
+class SibylaApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("SibylaTranslate")
+        self._worker: TranslationWorker | None = None
+        self._log_lines: list = []
+        self._build_ui()
+        self.showMaximized()
 
-        # Abre traduzido (se for PDF) ou lê texto como fallback
-        if cfg.fmt == "pdf" and os.path.isfile(cfg.saida):
-            try:
-                self._cmp_fitz_trad = fitz.open(cfg.saida)
-            except Exception:
-                self._cmp_fitz_trad = None
+    def _build_ui(self):
+        self._build_menubar()
+        central = QWidget()
+        central.setStyleSheet("background: transparent; border: none;")
+        v = QVBoxLayout(central)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        self._toolbar = Toolbar()
+        self._toolbar.open_btn.clicked.connect(self._cmd_open)
+        self._toolbar.traduzir_btn.clicked.connect(self._cmd_translate)
+        self._toolbar.hist_btn.clicked.connect(self._show_history)
+        v.addWidget(self._toolbar)
+        self._stack = QStackedWidget()
+        self._config_page = ConfigPage()
+        self._config_page.translate_requested.connect(self._start_translation)
+        self._result_page = ResultPage()
+        self._result_page.connect_back(self.switch_to_config)
+        self._stack.addWidget(self._config_page)
+        self._stack.addWidget(self._result_page)
+        v.addWidget(self._stack, stretch=1)
+        self._status_bar_widget = StatusBar()
+        v.addWidget(self._status_bar_widget)
+        self.setCentralWidget(central)
+
+    def _build_menubar(self):
+        mb = self.menuBar()
+        mb.setStyleSheet(f"QMenuBar {{ background: {BG_SURFACE}; border-bottom: 1px solid {BORDER}; }} QMenuBar::item {{ padding: 4px 10px; background: transparent; color: {TEXT_MAIN}; }} QMenuBar::item:selected {{ background: {BG_APP}; }}")
+        file_m = mb.addMenu("Arquivo")
+        open_a = QAction("Abrir PDF", self)
+        open_a.setShortcut("Ctrl+O")
+        open_a.triggered.connect(self._cmd_open)
+        file_m.addAction(open_a)
+        file_m.addSeparator()
+        quit_a = QAction("Sair", self)
+        quit_a.triggered.connect(self.close)
+        file_m.addAction(quit_a)
+        view_m = mb.addMenu("Visualizar")
+        theme_a = QAction("Tema claro/escuro", self)
+        theme_a.triggered.connect(lambda: QMessageBox.information(self, "Tema", "Alternância de tema disponível na próxima versão."))
+        view_m.addAction(theme_a)
+        help_m = mb.addMenu("Ajuda")
+        about_a = QAction("Sobre", self)
+        about_a.triggered.connect(self._show_about)
+        help_m.addAction(about_a)
+
+    def switch_to_result(self):
+        self._stack.setCurrentIndex(1)
+        self._toolbar.show_result_mode()
+
+    def switch_to_config(self):
+        self._stack.setCurrentIndex(0)
+        self._toolbar.show_config_mode()
+        self._status_bar_widget.reset()
+
+    def _cmd_open(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Abrir PDF", "", "PDF (*.pdf);;Todos (*.*)")
+        if path:
+            self._config_page._drop_zone.load_file(path)
+            if self._stack.currentIndex() != 0:
+                self.switch_to_config()
+
+    def _cmd_translate(self):
+        if self._stack.currentIndex() == 0:
+            self._config_page._on_translate()
+
+    def _start_translation(self, cfg):
+        self._log_lines = []
+        self._config_page.set_translating(True)
+        self._status_bar_widget.start_progress()
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+            self._worker.wait(2000)
+        self._worker = TranslationWorker(cfg)
+        self._worker.log_line.connect(self._on_log)
+        self._worker.finished.connect(self._on_done)
+        self._worker.start()
+        QTimer.singleShot(600, lambda: self.switch_to_result() if self._stack.currentIndex() == 0 else None)
+
+    def _on_log(self, line: str):
+        self._log_lines.append(line)
+        self._status_bar_widget.set_text(line[:80])
+        m = re.search(r"\[(\d+)/(\d+)\]", line)
+        if m:
+            cur, tot = int(m.group(1)), int(m.group(2))
+            self._status_bar_widget.show_progress_value(int(cur / tot * 100))
+            elapsed_hint = f"Pág {cur}/{tot}"
+            self._status_bar_widget.set_estimate(elapsed_hint)
+
+    def _on_done(self, success: bool, msg: str):
+        self._config_page.set_translating(False)
+        if success:
+            self._status_bar_widget.finish_progress()
+            self._status_bar_widget.set_text(f"Concluído · {os.path.basename(msg)}")
+            self._save_history()
+            self._populate_result(msg)
+            self.switch_to_result()
         else:
-            self._cmp_pages_trad = self._read_translated_pages(cfg.saida, cfg.fmt)
+            self._status_bar_widget.set_text(f"Erro: {msg[:60]}")
+            self._status_bar_widget.reset()
+            QMessageBox.critical(self, "Erro na tradução", msg)
 
-        self._cmp_page = 1
-        self._cmp_orig_lbl.configure(text=f"ORIGINAL · {cfg.lang_src.upper()}")
-        self._cmp_trad_lbl.configure(text=f"TRADUZIDO · {cfg.lang_dst.upper()}")
-        if self._cmp_total:
-            self._cmp_status_lbl.configure(text=f"{self._cmp_total} páginas")
-
-        # Preenche aba Traduzido com texto
-        full_trad_pages = self._read_translated_pages(cfg.saida, cfg.fmt)
-        full_trad = "\n\n".join(full_trad_pages)
-        self._trad_box.configure(state="normal")
-        self._trad_box.delete("1.0", "end")
-        self._trad_box.insert("1.0", full_trad)
-        self._trad_box.configure(state="disabled")
-
-        self._tabview.set("Comparar")
-        self.after(80, self._cmp_render)
-
-    def _read_translated_pages(self, saida: str, fmt: str) -> list[str]:
-        """Lê o arquivo de saída e retorna lista de páginas (melhor esforço)."""
-        if not saida or not os.path.isfile(saida):
-            return []
+    def _populate_result(self, saida: str):
+        if not self._worker:
+            return
+        cfg = self._worker._cfg
+        orig_pages: list = []
         try:
-            if fmt in ("txt", "md"):
-                text = open(saida, encoding="utf-8").read()
-                # Separa por form-feed (\x0c) que alguns geradores inserem
-                parts = [p.strip() for p in text.split("\x0c") if p.strip()]
-                return parts if parts else [text.strip()]
-            elif fmt == "pdf":
+            import fitz
+            doc = fitz.open(cfg.pdf)
+            for i in range(cfg.pag_ini - 1, cfg.pag_fim):
+                orig_pages.append(doc[i].get_text("text") or f"[Página {i + 1} — sem texto extraível]")
+            doc.close()
+        except Exception:
+            orig_pages = [f"[Erro ao ler PDF original]"]
+        trad_pages: list = []
+        try:
+            if cfg.fmt == "docx":
+                from docx import Document as _Doc
+                d = _Doc(saida)
+                block, blocks = [], []
+                for p in d.paragraphs:
+                    if p.text.strip():
+                        block.append(p.text)
+                    elif block:
+                        blocks.append("\n".join(block))
+                        block = []
+                if block:
+                    blocks.append("\n".join(block))
+                trad_pages = blocks or ["(documento vazio)"]
+            elif cfg.fmt in ("txt", "md"):
+                with open(saida, encoding="utf-8") as f:
+                    raw = f.read()
+                trad_pages = [b.strip() for b in raw.split("\n\n") if b.strip()]
+            elif cfg.fmt == "pdf":
+                import pdfplumber
                 with pdfplumber.open(saida) as p:
-                    return [pg.extract_text() or "" for pg in p.pages]
-            elif fmt == "docx":
-                from docx import Document  # já é dependência do projeto
-                doc = Document(saida)
-                paragraphs = [par.text for par in doc.paragraphs]
-                # Tenta quebrar em "páginas" por parágrafos em branco duplos
-                pages, current = [], []
-                for line in paragraphs:
-                    if line.strip() == "":
-                        if current:
-                            pages.append("\n".join(current))
-                            current = []
-                    else:
-                        current.append(line)
-                if current:
-                    pages.append("\n".join(current))
-                return pages if pages else ["\n".join(paragraphs)]
-        except Exception:
-            pass
-        return []
+                    trad_pages = [pg.extract_text() or "" for pg in p.pages]
+        except Exception as e:
+            trad_pages = [f"[Erro ao ler arquivo de saída: {e}]"]
+        self._result_page.populate(orig_pages, trad_pages, self._toolbar.total_lbl)
 
-    def _finalizar(self) -> None:
-        self._btn_traduzir.configure(state="normal")
-        self._btn_cancelar.configure(state="disabled")
-        self._progress.set(1)
-        cancelado = self._cancel_event.is_set()
-        msg = "Cancelado" if cancelado else "Concluído"
-        self._lbl_status.configure(text=msg)
-        self._sb_lbl_paginas.configure(text=msg)
-        self._sb_lbl_vel.configure(text="")
-        self._sb_lbl_rest.configure(text="")
-        if not cancelado:
-            self._notify_complete()
-            self._historico_salvar()
-
-    def _notify_complete(self) -> None:
-        try:
-            focused = self.focus_displayof()
-        except Exception:
-            focused = True
-        if focused:
+    def _save_history(self):
+        if not self._worker:
             return
-        if _PLYER_AVAILABLE:
-            try:
-                _plyer_notification.notify(
-                    title="SibylaTranslate",
-                    message="Tradução concluída!",
-                    timeout=5)
-                return
-            except Exception:
-                pass
-        try:
-            import winsound
-            winsound.MessageBeep(winsound.MB_ICONASTERISK)
-        except Exception:
-            pass
-
-    def _historico_salvar(self) -> None:
-        cfg_last = getattr(self, "_last_cfg", None)
-        if cfg_last is None:
-            return
-        elapsed = int(time.time() - self._start_time) if self._start_time else 0
-        from datetime import datetime, timezone
-        entrada = {
-            "pdf":       cfg_last.pdf,
-            "saida":     cfg_last.saida,
-            "fmt":       cfg_last.fmt,
-            "lang_src":  cfg_last.lang_src,
-            "lang_dst":  cfg_last.lang_dst,
-            "pag_ini":   cfg_last.pag_ini,
-            "pag_fim":   cfg_last.pag_fim,
-            "data_iso":  datetime.now(timezone.utc).isoformat(),
-            "duracao_s": elapsed,
+        from sibylatranslate.config import AppConfig
+        cfg = self._worker._cfg
+        config = AppConfig.load()
+        entry = {
+            "pdf": cfg.pdf, "saida": cfg.saida, "fmt": cfg.fmt,
+            "lang_src": cfg.lang_src, "lang_dst": cfg.lang_dst,
+            "pag_ini": cfg.pag_ini, "pag_fim": cfg.pag_fim,
+            "data_iso": datetime.now(timezone.utc).isoformat(),
         }
-        hist = self._config.get("historico", [])
-        hist.insert(0, entrada)
-        self._config.set("historico", hist[:10])
-        self._historico_render()
+        hist = config.get("historico", [])
+        hist.insert(0, entry)
+        config.set("historico", hist[:10])
 
-    def _cancelar(self) -> None:
-        self._cancel_event.set()
-        self._log("\n⚠️  Cancelamento solicitado — aguardando fim da página atual…\n")
-        self._btn_cancelar.configure(state="disabled")
-        self._lbl_status.configure(text="Cancelando…")
+    def _show_history(self):
+        from sibylatranslate.config import AppConfig
+        hist = AppConfig.load().get("historico", [])
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Histórico de traduções")
+        dlg.resize(540, 420)
+        layout = QVBoxLayout(dlg)
+        if not hist:
+            layout.addWidget(QLabel("Nenhuma tradução registrada."))
+        else:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            inner = QWidget()
+            il = QVBoxLayout(inner)
+            for entry in hist[:10]:
+                card = QFrame()
+                card.setStyleSheet(f"QFrame {{ background: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: 6px; }}")
+                cl = QHBoxLayout(card)
+                cl.setContentsMargins(12, 8, 12, 8)
+                info = QVBoxLayout()
+                nome = os.path.basename(entry.get("pdf", "—"))
+                n_lbl = QLabel(nome)
+                n_lbl.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+                n_lbl.setStyleSheet(f"color: {TEXT_MAIN}; border: none; background: transparent;")
+                info.addWidget(n_lbl)
+                meta = f"{entry.get('lang_src','?')} → {entry.get('lang_dst','?')}  ·  págs {entry.get('pag_ini','?')}–{entry.get('pag_fim','?')}"
+                m_lbl = QLabel(meta)
+                m_lbl.setStyleSheet(f"color: {TEXT_SEC}; border: none; background: transparent;")
+                info.addWidget(m_lbl)
+                cl.addLayout(info)
+                cl.addStretch()
+                reopen = QPushButton("Reabrir")
+                reopen.setStyleSheet(f"QPushButton {{ background: {BG_SURFACE}; border: 1px solid #CCCCCC; border-radius: 6px; padding: 4px 12px; color: #333333; }} QPushButton:hover {{ background: #F5F5F5; }}")
+                reopen.clicked.connect(lambda _, e=entry: (dlg.accept(), self._config_page.restore_from_history(e), self.switch_to_config()))
+                cl.addWidget(reopen)
+                il.addWidget(card)
+            il.addStretch()
+            scroll.setWidget(inner)
+            layout.addWidget(scroll)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        bb.rejected.connect(dlg.reject)
+        layout.addWidget(bb)
+        dlg.exec()
 
-    # ── Encerramento ──────────────────────────────────────────────────────────
-    def on_close(self) -> None:
-        self._cancel_event.set()
-        self._preview.fechar()
-        for attr in ("_cmp_fitz_orig", "_cmp_fitz_trad"):
-            doc = getattr(self, attr, None)
-            if doc:
-                try:
-                    doc.close()
-                except Exception:
-                    pass
-        self.after_cancel(self._after_flush)
-        self.destroy()
+    def _show_about(self):
+        QMessageBox.information(self, "Sobre SibylaTranslate",
+            "SibylaTranslate\n\nTradução de PDFs via Google Translate.\n"
+            "Gratuito, sem API key, sem tokens.\n\nPython + PyQt6 + PyMuPDF")
 
 
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setStyleSheet(STYLESHEET)
+    app.setFont(QFont("Segoe UI", 11))
+    window = SibylaApp()
+    window.show()
+    sys.exit(app.exec())

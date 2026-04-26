@@ -12,15 +12,16 @@ import sys
 
 
 def _run_gui() -> None:
-    import customtkinter as ctk
-    ctk.set_appearance_mode("dark")
-    ctk.set_default_color_theme("blue")
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtGui import QFont
+    from sibylatranslate.ui.app import SibylaApp, STYLESHEET
 
-    from sibylatranslate.ui.app import SibylaApp
-
-    app = SibylaApp()
-    app.protocol("WM_DELETE_WINDOW", app.on_close)
-    app.mainloop()
+    app = QApplication(sys.argv)
+    app.setStyleSheet(STYLESHEET)
+    app.setFont(QFont("Segoe UI", 11))
+    window = SibylaApp()
+    window.show()
+    sys.exit(app.exec())
 
 
 def _run_cli() -> None:
