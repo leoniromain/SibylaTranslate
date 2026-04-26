@@ -1,9 +1,29 @@
 import os
 import re
+import time
 import queue
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
+
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    _DND_AVAILABLE = True
+except ImportError:
+    _DND_AVAILABLE = False
+
+try:
+    from langdetect import detect as _langdetect, DetectorFactory
+    DetectorFactory.seed = 0
+    _LANGDETECT_AVAILABLE = True
+except ImportError:
+    _LANGDETECT_AVAILABLE = False
+
+try:
+    from plyer import notification as _plyer_notification
+    _PLYER_AVAILABLE = True
+except ImportError:
+    _PLYER_AVAILABLE = False
 
 from PIL import Image, ImageTk
 import customtkinter as ctk
@@ -171,9 +191,17 @@ class _LangPicker(ctk.CTkFrame):
         self._popup = None
 
 
-class SibylaApp(ctk.CTk):
+_BASE_CLASS = TkinterDnD.Tk if _DND_AVAILABLE else ctk.CTk
+
+
+class SibylaApp(_BASE_CLASS):
     def __init__(self):
-        super().__init__()
+        if _DND_AVAILABLE:
+            super().__init__()
+            ctk.set_appearance_mode("dark")
+            ctk.set_default_color_theme("blue")
+        else:
+            super().__init__()
         self.title("SibylaTranslate")
         self.geometry("1120x720")
         self.minsize(900, 580)
@@ -184,8 +212,8 @@ class SibylaApp(ctk.CTk):
         self._log_redirector = LogRedirector(self._log_queue)
         self._cancel_event = threading.Event()
         self._worker: threading.Thread | None = None
+        self._start_time: float = 0.0
 
-        # vars initialized before _build_ui so helpers can reference them
         self._tema_var = tk.StringVar(value=self._config.get("tema", "dark"))
         self._fmt_var  = tk.StringVar(value=_LBL_BY_FMT.get(self._config.get("fmt",  "docx"), "Word"))
         self._modo_var = tk.StringVar(value=_LBL_BY_MODO.get(self._config.get("modo", "novo"), "Novo"))
@@ -193,14 +221,104 @@ class SibylaApp(ctk.CTk):
         self._build_ui()
         self._after_flush = self.after(100, self._flush_log)
 
-    # ── Build UI ──────────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
-        self.columnconfigure(0, weight=0)   # sidebar — fixed
-        self.columnconfigure(1, weight=1)   # main — expands
+        self.columnconfigure(0, weight=0)
+        self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=0)
         self._build_sidebar()
         self._build_main_area()
+        self._build_statusbar()
+        self._build_welcome()
         ctk.set_appearance_mode(self._tema_var.get())
+        self._toggle_main_view()
+        self._register_shortcuts()
+        if _DND_AVAILABLE:
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<Drop>>", self._on_drop)
+
+    def _build_statusbar(self) -> None:
+        bar = ctk.CTkFrame(self, height=30, corner_radius=0,
+                           fg_color=("gray88", "gray12"))
+        bar.grid(row=1, column=0, columnspan=2, sticky="ew")
+        bar.columnconfigure(1, weight=1)
+
+        self._sb_progress = ctk.CTkProgressBar(bar, height=3, corner_radius=0, width=140)
+        self._sb_progress.set(0)
+        self._sb_progress.grid(row=0, column=0, padx=(12, 8), pady=(0, 0), sticky="w")
+
+        self._sb_lbl_paginas  = ctk.CTkLabel(bar, text="Pronto",
+                                              font=ctk.CTkFont(size=10), text_color="gray50")
+        self._sb_lbl_paginas.grid(row=0, column=1, sticky="w", padx=4)
+
+        self._sb_lbl_vel = ctk.CTkLabel(bar, text="",
+                                         font=ctk.CTkFont(size=10), text_color="gray50")
+        self._sb_lbl_vel.grid(row=0, column=2, sticky="e", padx=(4, 4))
+
+        self._sb_lbl_rest = ctk.CTkLabel(bar, text="",
+                                          font=ctk.CTkFont(size=10), text_color="gray50")
+        self._sb_lbl_rest.grid(row=0, column=3, sticky="e", padx=(0, 12))
+
+    def _build_welcome(self) -> None:
+        self._welcome = ctk.CTkFrame(self, fg_color="transparent")
+        self._welcome.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=(12, 12))
+        self._welcome.columnconfigure(0, weight=1)
+        self._welcome.rowconfigure(0, weight=1)
+
+        inner = ctk.CTkFrame(self._welcome, fg_color="transparent")
+        inner.grid(row=0, column=0)
+
+        ctk.CTkLabel(inner, text="📄", font=ctk.CTkFont(size=72)).pack(pady=(0, 16))
+        ctk.CTkLabel(inner, text="SibylaTranslate",
+                     font=ctk.CTkFont(size=22, weight="bold")).pack()
+        ctk.CTkLabel(inner, text="Arraste um PDF aqui ou clique em  ···  para começar",
+                     font=ctk.CTkFont(size=13), text_color="gray50").pack(pady=(8, 24))
+
+        hints = ctk.CTkFrame(inner, fg_color=("gray90", "gray18"), corner_radius=10)
+        hints.pack(pady=(0, 8))
+        for icon, txt in [
+            ("Ctrl+O",  "Abrir PDF"),
+            ("Ctrl+↵",  "Traduzir"),
+            ("Esc",     "Cancelar"),
+        ]:
+            row = ctk.CTkFrame(hints, fg_color="transparent")
+            row.pack(fill="x", padx=24, pady=4)
+            ctk.CTkLabel(row, text=icon, width=68,
+                         font=ctk.CTkFont(family="Courier", size=11),
+                         fg_color=("gray80", "gray25"), corner_radius=5,
+                         text_color=("gray20", "gray80")).pack(side="left")
+            ctk.CTkLabel(row, text=txt,
+                         font=ctk.CTkFont(size=11), text_color="gray50").pack(
+                side="left", padx=10)
+
+        if _DND_AVAILABLE:
+            self._welcome.drop_target_register(DND_FILES)
+            self._welcome.dnd_bind("<<Drop>>", self._on_drop)
+
+    def _toggle_main_view(self) -> None:
+        has_pdf = bool(self._pdf_var.get() if hasattr(self, "_pdf_var") else False)
+        if has_pdf:
+            self._welcome.grid_remove()
+            self._tabview.grid()
+        else:
+            self._tabview.grid_remove()
+            self._welcome.grid()
+
+    def _register_shortcuts(self) -> None:
+        self.bind("<Control-o>", lambda _e: self._selecionar_pdf())
+        self.bind("<Control-O>", lambda _e: self._selecionar_pdf())
+        self.bind("<Control-Return>", lambda _e: self._iniciar() if self._btn_traduzir.cget("state") == "normal" else None)
+        self.bind("<Control-s>", lambda _e: self._selecionar_saida())
+        self.bind("<Control-S>", lambda _e: self._selecionar_saida())
+        self.bind("<Escape>", lambda _e: self._cancelar() if self._btn_cancelar.cget("state") == "normal" else None)
+
+    def _on_drop(self, event) -> None:
+        path = event.data.strip().strip("{}")
+        if path.lower().endswith(".pdf") and os.path.isfile(path):
+            self._pdf_var.set(path)
+            self._config.set("ultimo_pdf", path)
+            self._pdf_name_lbl.configure(text=self._pdf_short_name())
+            self._atualizar_total_paginas()
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     def _build_sidebar(self) -> None:
@@ -522,13 +640,22 @@ class SibylaApp(ctk.CTk):
             wrap="word", state="disabled")
         self._log_box.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
 
-        # ── Histórico (placeholder) ───────────────────────────────────────────
+        # ── Histórico ────────────────────────────────────────────────────────
         tab_hist = self._tabview.tab("Histórico")
         tab_hist.columnconfigure(0, weight=1)
-        tab_hist.rowconfigure(0, weight=1)
-        ctk.CTkLabel(tab_hist, text="Histórico de traduções",
-                     font=ctk.CTkFont(size=13), text_color="gray50").grid(
-            row=0, column=0)
+        tab_hist.rowconfigure(1, weight=1)
+
+        hist_hdr = ctk.CTkFrame(tab_hist, fg_color="transparent")
+        hist_hdr.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
+        ctk.CTkLabel(hist_hdr, text="Últimas traduções",
+                     font=ctk.CTkFont(size=12), text_color="gray60").pack(side="left")
+        ctk.CTkButton(hist_hdr, text="Limpar", width=70, height=24,
+                      command=self._historico_limpar).pack(side="right")
+
+        self._hist_scroll = ctk.CTkScrollableFrame(tab_hist, fg_color="transparent")
+        self._hist_scroll.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        self._hist_scroll.columnconfigure(0, weight=1)
+        self._historico_render()
 
         # ── Recortar ─────────────────────────────────────────────────────────
         self._build_cutter_tab(self._tabview.tab("✂ Recortar"))
@@ -561,11 +688,23 @@ class SibylaApp(ctk.CTk):
         self._cmp_orig_canvas.grid(row=1, column=0, sticky="nsew",
                                    padx=(8, 4), pady=(0, 0))
         self._cmp_orig_canvas.bind("<Configure>", lambda _e: self._cmp_render())
+        self._cmp_orig_canvas.bind("<MouseWheel>",
+                                   lambda e: self._cmp_scroll(e))
+        self._cmp_orig_canvas.bind("<Button-4>",
+                                   lambda e: self._cmp_nav(-1))
+        self._cmp_orig_canvas.bind("<Button-5>",
+                                   lambda e: self._cmp_nav(1))
 
         self._cmp_trad_canvas = tk.Canvas(tab, bg=bg, highlightthickness=0)
         self._cmp_trad_canvas.grid(row=1, column=1, sticky="nsew",
                                    padx=(4, 8), pady=(0, 0))
         self._cmp_trad_canvas.bind("<Configure>", lambda _e: self._cmp_render())
+        self._cmp_trad_canvas.bind("<MouseWheel>",
+                                   lambda e: self._cmp_scroll(e))
+        self._cmp_trad_canvas.bind("<Button-4>",
+                                   lambda e: self._cmp_nav(-1))
+        self._cmp_trad_canvas.bind("<Button-5>",
+                                   lambda e: self._cmp_nav(1))
 
         # ── Shared navigation + status bar ─────────────────────────────────
         bottom = ctk.CTkFrame(tab, height=36, corner_radius=0,
@@ -605,6 +744,10 @@ class SibylaApp(ctk.CTk):
             return
         self._cmp_page = max(1, min(self._cmp_total, self._cmp_page + delta))
         self._cmp_render()
+
+    def _cmp_scroll(self, event) -> None:
+        delta = -1 if event.delta > 0 else 1
+        self._cmp_nav(delta)
 
     def _cmp_render(self) -> None:
         t = self._cmp_total
@@ -913,6 +1056,87 @@ class SibylaApp(ctk.CTk):
             self._est_custo_var.set(f"~${custo:.2f}")
         self.after(0, _apply)
 
+    def _historico_render(self) -> None:
+        if not hasattr(self, "_hist_scroll"):
+            return
+        for w in self._hist_scroll.winfo_children():
+            w.destroy()
+        hist = self._config.get("historico", [])
+        if not hist:
+            ctk.CTkLabel(self._hist_scroll, text="Nenhuma tradução registrada ainda.",
+                         text_color="gray50", font=ctk.CTkFont(size=12)).pack(pady=24)
+            return
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        fmt_icons = {"docx": "📝", "txt": "📄", "md": "🗒️", "pdf": "📕"}
+        for entry in hist:
+            card = ctk.CTkFrame(self._hist_scroll, corner_radius=8)
+            card.pack(fill="x", pady=(0, 6))
+            card.columnconfigure(1, weight=1)
+
+            icon = fmt_icons.get(entry.get("fmt", "docx"), "📄")
+            ctk.CTkLabel(card, text=icon, font=ctk.CTkFont(size=22),
+                         width=40).grid(row=0, column=0, rowspan=2,
+                                        padx=(10, 4), pady=10)
+
+            nome = os.path.basename(entry.get("pdf", ""))
+            nome = nome[:34] + "…" if len(nome) > 36 else nome
+            ctk.CTkLabel(card, text=nome,
+                         font=ctk.CTkFont(size=12, weight="bold"),
+                         anchor="w").grid(row=0, column=1, sticky="ew",
+                                          padx=(0, 4), pady=(8, 0))
+
+            src  = entry.get("lang_src", "?")
+            dst  = entry.get("lang_dst", "?")
+            pini = entry.get("pag_ini", "?")
+            pfim = entry.get("pag_fim", "?")
+            try:
+                dt   = datetime.fromisoformat(entry["data_iso"])
+                diff = now - dt
+                days = diff.days
+                data_str = ("hoje" if days == 0
+                            else "ontem" if days == 1
+                            else f"há {days} dias")
+            except Exception:
+                data_str = ""
+            dur = entry.get("duracao_s", 0)
+            dur_str = f"{dur}s" if dur < 60 else f"{dur//60}min"
+            meta = f"{src} → {dst}  ·  págs {pini}–{pfim}  ·  {data_str}  ·  {dur_str}"
+            ctk.CTkLabel(card, text=meta,
+                         font=ctk.CTkFont(size=10), text_color="gray50",
+                         anchor="w").grid(row=1, column=1, sticky="ew",
+                                          padx=(0, 4), pady=(0, 8))
+
+            ctk.CTkButton(card, text="📂 Reabrir", width=80, height=26,
+                          command=lambda e=entry: self._historico_reabrir(e)).grid(
+                row=0, column=2, rowspan=2, padx=10)
+
+    def _historico_limpar(self) -> None:
+        self._config.set("historico", [])
+        self._historico_render()
+
+    def _historico_reabrir(self, entry: dict) -> None:
+        pdf = entry.get("pdf", "")
+        if not os.path.isfile(pdf):
+            messagebox.showerror("Erro", f"Arquivo não encontrado:\n{pdf}")
+            return
+        self._pdf_var.set(pdf)
+        self._config.set("ultimo_pdf", pdf)
+        self._pdf_name_lbl.configure(text=self._pdf_short_name())
+        self._pag_ini_var.set(str(entry.get("pag_ini", 1)))
+        self._pag_fim_var.set(str(entry.get("pag_fim", 1)))
+        src = entry.get("lang_src", "en")
+        dst = entry.get("lang_dst", "pt")
+        self._lang_src_var.set(_DISPLAY_BY_CODE.get(src, src))
+        self._lang_dst_var.set(_DISPLAY_BY_CODE.get(dst, dst))
+        fmt = entry.get("fmt", "docx")
+        self._fmt_var.set(_LBL_BY_FMT.get(fmt, "Word"))
+        saida = entry.get("saida", "")
+        if saida:
+            self._saida_var.set(saida)
+        self._atualizar_total_paginas()
+        self._tabview.set("Original")
+
     def _on_tab_change(self) -> None:
         if self._tabview.get() == "Original":
             self.after(50, self._preview.renderizar)
@@ -934,7 +1158,7 @@ class SibylaApp(ctk.CTk):
         path = filedialog.askopenfilename(
             title="Selecionar PDF",
             filetypes=[("PDF", "*.pdf"), ("Todos", "*.*")],
-            initialdir=os.path.dirname(self._pdf_var.get()) or os.getcwd(),
+            initialdir=os.path.dirname(self._config.get("ultimo_pdf", "") or os.getcwd()),
         )
         if path:
             self._pdf_var.set(path)
@@ -984,7 +1208,28 @@ class SibylaApp(ctk.CTk):
             return
         self._preview.abrir(pdf)
         self._tabview.set("Original")
+        self._toggle_main_view()
         self.after(300, self._update_estimativa)
+        if _LANGDETECT_AVAILABLE:
+            threading.Thread(target=self._detect_lang_bg,
+                             args=(pdf,), daemon=True).start()
+
+    def _detect_lang_bg(self, pdf: str) -> None:
+        try:
+            with pdfplumber.open(pdf) as p:
+                text = (p.pages[0].extract_text() or "")[:2000]
+            if len(text.strip()) < 20:
+                return
+            code = _langdetect(text)
+            display = _DISPLAY_BY_CODE.get(code, "")
+            if display:
+                def _apply() -> None:
+                    self._lang_src_var.set(display)
+                    self._lang_detect_lbl.configure(
+                        text=f"● Detectado: {display.split(' (')[0]}")
+                self.after(0, _apply)
+        except Exception:
+            pass
 
     def _todas_paginas(self) -> None:
         pdf = self._pdf_var.get()
@@ -1034,7 +1279,20 @@ class SibylaApp(ctk.CTk):
                 if m:
                     atual, total = int(m.group(1)), int(m.group(2))
                     self._progress.set(atual / total)
+                    self._sb_progress.set(atual / total)
+                    elapsed = time.time() - self._start_time if self._start_time else 0
+                    if elapsed > 0 and atual > 0:
+                        ppm = atual / (elapsed / 60)
+                        rest_min = (total - atual) / ppm if ppm > 0 else 0
+                        vel_str  = f"{ppm:.1f} pág/min"
+                        rest_str = (f"~{int(rest_min)} min restantes"
+                                    if rest_min >= 1 else "< 1 min")
+                    else:
+                        vel_str = rest_str = ""
                     self._lbl_status.configure(text=f"Página {atual} de {total}")
+                    self._sb_lbl_paginas.configure(text=f"Página {atual} / {total}")
+                    self._sb_lbl_vel.configure(text=vel_str)
+                    self._sb_lbl_rest.configure(text=rest_str)
         except queue.Empty:
             pass
         self._after_flush = self.after(100, self._flush_log)
@@ -1112,16 +1370,22 @@ class SibylaApp(ctk.CTk):
                   f"  |  {cfg.fmt.upper()}")
         self._log(f"  Saída: {cfg.saida}\n")
         self._progress.set(0)
+        self._sb_progress.set(0)
+        self._sb_lbl_paginas.configure(text="Iniciando…")
+        self._sb_lbl_vel.configure(text="")
+        self._sb_lbl_rest.configure(text="")
         self._lbl_status.configure(text="Iniciando…")
         self._btn_traduzir.configure(state="disabled")
         self._btn_cancelar.configure(state="normal")
         self._cancel_event.clear()
+        self._start_time = time.time()
         self._log_redirector.install()
 
         self._worker = threading.Thread(target=self._run_worker, args=(cfg,), daemon=True)
         self._worker.start()
 
     def _run_worker(self, cfg: TranslationConfig) -> None:
+        self._last_cfg = cfg
         try:
             processar(cfg.pdf, cfg.pag_ini, cfg.pag_fim, cfg.saida, cfg.modo, cfg.base,
                       cancel_event=self._cancel_event,
@@ -1219,8 +1483,59 @@ class SibylaApp(ctk.CTk):
         self._btn_traduzir.configure(state="normal")
         self._btn_cancelar.configure(state="disabled")
         self._progress.set(1)
-        self._lbl_status.configure(
-            text="Concluído" if not self._cancel_event.is_set() else "Cancelado")
+        cancelado = self._cancel_event.is_set()
+        msg = "Cancelado" if cancelado else "Concluído"
+        self._lbl_status.configure(text=msg)
+        self._sb_lbl_paginas.configure(text=msg)
+        self._sb_lbl_vel.configure(text="")
+        self._sb_lbl_rest.configure(text="")
+        if not cancelado:
+            self._notify_complete()
+            self._historico_salvar()
+
+    def _notify_complete(self) -> None:
+        try:
+            focused = self.focus_displayof()
+        except Exception:
+            focused = True
+        if focused:
+            return
+        if _PLYER_AVAILABLE:
+            try:
+                _plyer_notification.notify(
+                    title="SibylaTranslate",
+                    message="Tradução concluída!",
+                    timeout=5)
+                return
+            except Exception:
+                pass
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        except Exception:
+            pass
+
+    def _historico_salvar(self) -> None:
+        cfg_last = getattr(self, "_last_cfg", None)
+        if cfg_last is None:
+            return
+        elapsed = int(time.time() - self._start_time) if self._start_time else 0
+        from datetime import datetime, timezone
+        entrada = {
+            "pdf":       cfg_last.pdf,
+            "saida":     cfg_last.saida,
+            "fmt":       cfg_last.fmt,
+            "lang_src":  cfg_last.lang_src,
+            "lang_dst":  cfg_last.lang_dst,
+            "pag_ini":   cfg_last.pag_ini,
+            "pag_fim":   cfg_last.pag_fim,
+            "data_iso":  datetime.now(timezone.utc).isoformat(),
+            "duracao_s": elapsed,
+        }
+        hist = self._config.get("historico", [])
+        hist.insert(0, entrada)
+        self._config.set("historico", hist[:10])
+        self._historico_render()
 
     def _cancelar(self) -> None:
         self._cancel_event.set()
